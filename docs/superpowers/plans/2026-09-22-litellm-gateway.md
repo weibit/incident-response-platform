@@ -998,8 +998,15 @@ model_list:
       api_base: http://stub-model:8100/v1
       api_key: stub
 
+# A dict keyed by server name, NOT a list of objects. Verified in Task 1 against
+# litellm 1.90.2: load_servers_from_config takes Dict[str, Any] and iterates .items(),
+# so the key here IS the server name. It must equal MCP_SERVER in knowledge_backend.py,
+# because that is what the <server>-<tool> prefix is built from.
+#
+# transport is `http` for streamable HTTP. There is no `streamable_http` literal; the
+# valid values are sse | http | stdio.
 mcp_servers:
-  - server_name: runbooks
+  runbooks:
     url: http://runbooks:8080/mcp
     transport: http
     available_on_public_internet: false
@@ -1027,8 +1034,10 @@ import yaml, pathlib
 config = yaml.safe_load(pathlib.Path('deploy/litellm/config.yaml').read_text())
 assert [m['model_name'] for m in config['model_list']] == [
     'incident-triage', 'incident-rca', 'incident-plan']
-assert config['mcp_servers'][0]['allowed_tools'] == [
+assert list(config['mcp_servers']) == ['runbooks'], 'the key is the server name'
+assert config['mcp_servers']['runbooks']['allowed_tools'] == [
     'search_runbooks', 'search_similar_incidents']
+assert config['mcp_servers']['runbooks']['transport'] == 'http'
 print('config valid')
 "
 ```
