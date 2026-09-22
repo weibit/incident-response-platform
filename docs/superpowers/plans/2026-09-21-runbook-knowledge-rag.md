@@ -747,7 +747,7 @@ Append to `tests/test_knowledge_retrieve.py`:
 ```python
 from pathlib import Path
 
-from incident_platform.knowledge.index import ingest_documents
+from incident_platform.knowledge.index import ingest_documents, prune_missing
 from incident_platform.knowledge.chunker import chunk_markdown
 
 
@@ -792,6 +792,63 @@ async def test_ingest_removes_chunks_that_no_longer_exist(pool):
             )
         ).fetchone()
     assert row["n"] == 1
+
+
+async def test_prune_removes_documents_the_corpus_no_longer_has(pool):
+    # A renamed frontmatter id or a deleted file must not keep being retrieved.
+    withdrawn = chunk_markdown(
+        "---\nid: zz-withdrawn\ntitle: Gone\nservice: checkout\n---\n\nStale guidance.\n",
+        source="docs/runbooks/zz-withdrawn.md",
+    )
+    await ingest_documents(pool, [*_corpus(), withdrawn], kind="runbook")
+    async with pool.connection() as conn:
+        before = await (
+            await conn.execute(
+                "SELECT count(*) AS n FROM knowledge_document WHERE doc_id='zz-withdrawn'"
+            )
+        ).fetchone()
+    assert before["n"] == 1
+
+    pruned = await prune_missing(pool, _corpus(), kind="runbook")
+    assert pruned == 1
+    async with pool.connection() as conn:
+        after = await (
+            await conn.execute(
+                "SELECT count(*) AS n FROM knowledge_document WHERE doc_id='zz-withdrawn'"
+            )
+        ).fetchone()
+        orphans = await (
+            await conn.execute(
+                "SELECT count(*) AS n FROM knowledge_chunk WHERE doc_id='zz-withdrawn'"
+            )
+        ).fetchone()
+    assert after["n"] == 0
+    assert orphans["n"] == 0  # chunks follow via ON DELETE CASCADE
+
+
+async def test_prune_refuses_an_empty_corpus(pool):
+    # A glob that momentarily returns nothing must not wipe the index.
+    with pytest.raises(ValueError, match="empty corpus"):
+        await prune_missing(pool, [], kind="runbook")
+
+
+async def test_prune_leaves_other_kinds_alone(pool):
+    await ingest_documents(pool, _corpus(), kind="runbook")
+    other = chunk_markdown(
+        "---\nid: zz-incident\ntitle: Prior\nservice: checkout\n---\n\nPrior incident.\n",
+        source="incident:zz-incident",
+    )
+    await ingest_documents(pool, [other], kind="incident")
+    await prune_missing(pool, _corpus(), kind="runbook")
+    async with pool.connection() as conn:
+        row = await (
+            await conn.execute(
+                "SELECT count(*) AS n FROM knowledge_document WHERE doc_id='zz-incident'"
+            )
+        ).fetchone()
+    assert row["n"] == 1
+    async with pool.connection() as conn:
+        await conn.execute("DELETE FROM knowledge_document WHERE doc_id='zz-incident'")
 ```
 
 - [ ] **Step 2: Run test to verify it fails**
@@ -843,11 +900,36 @@ async def ingest_documents(pool, documents: list[Document], kind: str) -> int:
                     await conn.execute(
                         "INSERT INTO knowledge_chunk(chunk_id,doc_id,heading,body,ordinal) "
                         "VALUES(%s,%s,%s,%s,%s) ON CONFLICT (chunk_id) DO UPDATE SET "
-                        "heading=EXCLUDED.heading, body=EXCLUDED.body, ordinal=EXCLUDED.ordinal",
+                        # doc_id is set too: chunk_id is a global key, and without this a
+                        # collision would leave a row owned by one document carrying
+                        # another's text. Impossible while chunk ids hash doc_id (pinned
+                        # by test_chunk_id_recipe_is_pinned), but the writer should not
+                        # depend on an invariant enforced only in the chunker.
+                        "doc_id=EXCLUDED.doc_id, heading=EXCLUDED.heading, "
+                        "body=EXCLUDED.body, ordinal=EXCLUDED.ordinal",
                         (chunk.chunk_id, doc.doc_id, chunk.heading, chunk.body, chunk.ordinal),
                     )
                 total += len(doc.chunks)
     return total
+
+
+async def prune_missing(pool, documents: list[Document], kind: str) -> int:
+    """Delete documents of this kind that the corpus no longer contains.
+
+    ingest_documents can only shrink a document that is still present, so without
+    this a renamed frontmatter id or a deleted file strands its rows forever and
+    retrieval keeps serving withdrawn guidance. Chunks follow via ON DELETE CASCADE.
+    """
+    if not documents:
+        # A corpus that momentarily reads as empty must not wipe the index.
+        raise ValueError(f"Refusing to prune {kind} documents against an empty corpus")
+    keep = [doc.doc_id for doc in documents]
+    async with pool.connection() as conn:
+        result = await conn.execute(
+            "DELETE FROM knowledge_document WHERE kind=%s AND NOT (doc_id = ANY(%s))",
+            (kind, keep),
+        )
+    return result.rowcount
 
 
 def load_corpus(directory: Path = CORPUS) -> list[Document]:
@@ -877,8 +959,10 @@ async def main() -> None:
     )
     await pool.open(wait=True)
     try:
-        count = await ingest_documents(pool, load_corpus(), kind="runbook")
-        print(f"indexed {count} runbook chunks", file=sys.stderr)
+        corpus = load_corpus()
+        count = await ingest_documents(pool, corpus, kind="runbook")
+        pruned = await prune_missing(pool, corpus, kind="runbook")
+        print(f"indexed {count} runbook chunks, pruned {pruned} documents", file=sys.stderr)
     finally:
         await pool.close()
 
@@ -890,7 +974,7 @@ if __name__ == "__main__":
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `TEST_DATABASE_URL=postgresql://incident:incident@localhost:5432/incident_test uv run pytest tests/test_knowledge_retrieve.py -m integration -v`
-Expected: PASS, 3 tests.
+Expected: PASS, 6 tests.
 
 If `test_ingest_is_idempotent` fails on the count, run the Task 3 Step 3 command and update the expected `10` to match the real chunk total. Do not change the chunker to fit the number.
 
@@ -2115,14 +2199,19 @@ async def embed_corpus(pool, embedder) -> int:
 Then extend `main()` in the same file, replacing its `try` body with:
 
 ```python
-    try:
-        count = await ingest_documents(pool, load_corpus(), kind="runbook")
-        from incident_platform.knowledge.embeddings import provider
+try:
+    from incident_platform.knowledge.embeddings import provider
 
-        embedded = await embed_corpus(pool, provider(cfg))
-        print(f"indexed {count} runbook chunks, embedded {embedded}", file=sys.stderr)
-    finally:
-        await pool.close()
+    corpus = load_corpus()
+    count = await ingest_documents(pool, corpus, kind="runbook")
+    pruned = await prune_missing(pool, corpus, kind="runbook")
+    embedded = await embed_corpus(pool, provider(cfg))
+    print(
+        f"indexed {count} runbook chunks, pruned {pruned} documents, embedded {embedded}",
+        file=sys.stderr,
+    )
+finally:
+    await pool.close()
 ```
 
 - [ ] **Step 5: Add the dense leg to retrieval**
@@ -2361,7 +2450,8 @@ Then extend `main()` so the ingest job covers both corpora. Replace the `print` 
 ```python
         incidents = await ingest_resolved_incidents(pool)
         print(
-            f"indexed {count} runbook chunks, {incidents} incident chunks, embedded {embedded}",
+            f"indexed {count} runbook chunks, pruned {pruned} documents, "
+            f"{incidents} incident chunks, embedded {embedded}",
             file=sys.stderr,
         )
 ```
