@@ -210,7 +210,9 @@ def test_a_number_stays_inside_a_bounded_schema():
         "/v1/chat/completions",
         json={"model": "m", "messages": [], "tools": [tool]},
     ).json()
-    arguments = json.loads(payload["choices"][0]["message"]["tool_calls"][0]["function"]["arguments"])
+    arguments = json.loads(
+        payload["choices"][0]["message"]["tool_calls"][0]["function"]["arguments"]
+    )
     assert 0 <= arguments["confidence"] <= 1
 
 
@@ -524,6 +526,9 @@ and change:
 Add the three resolving properties after the field declarations and before `validate_credentials`:
 
 ```python
+class Settings(BaseSettings):
+    # ... existing fields above ...
+
     @property
     def triage_model(self) -> str:
         return self.llm_model_triage or self.llm_model
@@ -541,12 +546,17 @@ In `validate_credentials`, add the gateway requirement directly after the existi
 `knowledge_enabled` block:
 
 ```python
+class Settings(BaseSettings):
+    @model_validator(mode="after")
+    def validate_credentials(self):
+        # ... existing knowledge_enabled block above ...
         if self.knowledge_enabled or not self.mock_mode:
             # Both paths reach the gateway: retrieval is gateway-only, and a live analyst
             # calls models through it. Fail at startup rather than at the first call.
             if not self.litellm_api_key.get_secret_value():
                 raise ValueError("litellm_api_key is required when the gateway is in use")
             secrets.append(self.litellm_api_key)
+        # ... existing embedding_model check and `return self` below ...
 ```
 
 - [ ] **Step 4: Run test to verify it passes**
@@ -695,6 +705,9 @@ class Analyst:
 Then pass the role at each of the three call sites. In `triage`:
 
 ```python
+class Analyst:
+    async def triage(self, state):
+        # ... existing mock_mode branch above ...
         return await self.structured(
             "triage", Triage, "Assess severity and need for investigation", state
         )
@@ -703,12 +716,15 @@ Then pass the role at each of the three call sites. In `triage`:
 In `investigate`:
 
 ```python
+class Analyst:
+    async def investigate(self, state):
+        # ... existing mock_mode branch above ...
         return await self.structured(
             "rca",
             InvestigationStep,
-            "Choose one read tool or conclude RCA. Tools: logs, metrics, kubernetes, deployments, "
-            "config_diffs, topology, runbooks, similar_incidents. Retrieval is optional. "
-            "Conclude only with corroborating evidence.",
+            "Choose one read tool or conclude RCA. Tools: logs, metrics, kubernetes, "
+            "deployments, config_diffs, topology, runbooks, similar_incidents. Retrieval "
+            "is optional. Conclude only with corroborating evidence.",
             state,
         )
 ```
@@ -716,6 +732,9 @@ In `investigate`:
 In `plan`:
 
 ```python
+class Analyst:
+    async def plan(self, state):
+        # ... existing mock_mode branch above ...
         return await self.structured(
             "plan",
             PlanDraft,
