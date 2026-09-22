@@ -1270,7 +1270,7 @@ In `pyproject.toml`, add `"mcp>=2,<3",` to the `dependencies` list, and add an e
 ```toml
 [project.optional-dependencies]
 anthropic = ["langchain-anthropic>=1,<2"]
-embeddings = ["langchain-voyageai>=1,<2"]
+embeddings = ["langchain-voyageai>=0.4,<1"]
 ```
 
 Then resolve. **This is where the `httpx2` risk recorded in the spec's Open Risk section is settled:**
@@ -1306,22 +1306,27 @@ git commit -m "feat(knowledge): add configuration, disabled by default"
 - Create: `src/incident_platform/knowledge/server.py`
 - Test: `tests/test_knowledge_server.py`
 
-- [ ] **Step 1: Discover the installed MCP server API**
+- [ ] **Step 1: API surface (already verified — read, do not re-derive)**
 
-The `mcp` package reached v2 with a reworked API. Confirm the exact names before writing, rather than trusting recall:
+These were confirmed against the installed `mcp` 2.2.0 during Task 7. Do not guess; if any
+disagrees with what you observe, stop and report it.
 
-```bash
-uv run python -c "
-import mcp, mcp.server, inspect
-print('version', getattr(mcp, '__version__', 'unknown'))
-print('server exports:', [n for n in dir(mcp.server) if not n.startswith('_')])
-from mcp.server import MCPServer
-print('MCPServer methods:', [n for n in dir(MCPServer) if not n.startswith('_')])
-print(inspect.signature(MCPServer.__init__))
-"
-```
+| Fact | Value |
+|---|---|
+| Server class | `from mcp.server import MCPServer` |
+| Tool decorator | `@mcp.tool()` |
+| ASGI accessor | `mcp.streamable_http_app(...)` returning a Starlette app — **not** `http_app()` |
+| Default path | `streamable_http_path="/mcp"` |
+| Pool lifecycle | `MCPServer(..., lifespan=...)`, an async context manager taking the server |
+| Host validation | `TransportSecuritySettings(allowed_hosts=[...])` from `mcp.server.transport_security` |
+| Client transport | `from mcp.client.streamable_http import streamable_http_client` |
+| Client headers | via `httpx2.AsyncClient(headers=...)` passed as `http_client=` — there is no `headers=` kwarg |
 
-Record which method returns an ASGI application. Expected to be one of `http_app()`, `streamable_http_app()`, or `asgi_app()`. Use whichever the output shows in Step 3; everything else in this task is unaffected.
+**DNS-rebinding protection is enabled by default** and rejects any request whose `Host` header
+is not in `allowed_hosts`. The worker reaches this service as `runbooks:8080` in Compose, so
+that value must be allowed or every call fails. `cfg.knowledge_allowed_hosts` supplies it.
+
+Do **not** pass `lifespan="off"` to `uvicorn.run` — the connection pool opens in the lifespan.
 
 - [ ] **Step 2: Write the failing test**
 
@@ -1375,10 +1380,12 @@ Create `src/incident_platform/knowledge/server.py`:
 
 ```python
 import hmac
+from contextlib import asynccontextmanager
 from dataclasses import asdict
 
 import uvicorn
 from mcp.server import MCPServer
+from mcp.server.transport_security import TransportSecuritySettings
 from psycopg.rows import dict_row
 from psycopg_pool import AsyncConnectionPool
 
@@ -1386,7 +1393,6 @@ from incident_platform.config import settings
 from incident_platform.knowledge.retrieve import search
 
 cfg = settings()
-mcp = MCPServer("incident-runbooks")
 pool = AsyncConnectionPool(
     cfg.database_url,
     open=False,
@@ -1395,6 +1401,18 @@ pool = AsyncConnectionPool(
     kwargs={"row_factory": dict_row},
     timeout=3,
 )
+
+
+@asynccontextmanager
+async def lifespan(_server):
+    await pool.open(wait=True)
+    try:
+        yield None
+    finally:
+        await pool.close()
+
+
+mcp = MCPServer("incident-runbooks", lifespan=lifespan)
 
 
 @mcp.tool()
@@ -1438,17 +1456,18 @@ def build_app():
     token = cfg.knowledge_mcp_token.get_secret_value()
     if not token:
         raise RuntimeError("knowledge_mcp_token must be set to run the knowledge server")
-    # Replace http_app() with whichever accessor Task 8 Step 1 reported.
-    return bearer_auth(mcp.http_app(), token)
-
-
-async def _startup() -> None:
-    await pool.open(wait=True)
+    # DNS-rebinding protection is on by default and validates the Host header. The
+    # worker reaches this service by its Compose hostname, so that must be allowed.
+    security = TransportSecuritySettings(allowed_hosts=cfg.knowledge_allowed_hosts)
+    return bearer_auth(
+        mcp.streamable_http_app(streamable_http_path="/mcp", transport_security=security),
+        token,
+    )
 
 
 if __name__ == "__main__":
-    mcp_app = build_app()
-    uvicorn.run(mcp_app, host="0.0.0.0", port=8080, lifespan="off")
+    # No lifespan="off": the connection pool opens in the MCPServer lifespan.
+    uvicorn.run(build_app(), host="0.0.0.0", port=8080)
 ```
 
 Note: `uvicorn` is already a project dependency, so the guard needs no new package. No indexing or mutation tool is registered here — that is deliberate and load-bearing, because LangGraph replays nodes after failures.

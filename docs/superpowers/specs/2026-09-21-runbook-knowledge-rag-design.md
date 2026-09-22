@@ -277,10 +277,14 @@ Compose gains a `runbooks` service built from the same image, running
 3. **Dense and incidents.** Optional embedding provider and RRF dense leg, `similar_incidents`
    sourced from resolved incidents, README and `docs/operations.md` updates.
 
-## Open risk
+## Resolved risk
 
-`mcp` v2 is built on `httpx2`; the pinned langchain/langgraph stack in `uv.lock` may depend on
-`httpx`. They are separate distributions and can coexist, but this must be confirmed by an
-actual `uv sync` in phase 2 rather than assumed. If they conflict, the fallback is to run the
-MCP server as its own uv project with its own lockfile, since it shares only the database with
-the rest of the platform.
+`mcp` v2 is built on `httpx2` while the pinned langchain stack uses `httpx`. Settled during
+Task 7 by a real `uv lock` / `uv sync`: `mcp` 2.2.0 pulls `httpx2` 2.13.0, which coexists with
+`httpx` 0.28.1 as a separate distribution. Both import cleanly in the same interpreter. The
+fallback of running the MCP server as its own uv project is not needed.
+
+Two further facts were established at the same time and are recorded in the plan's Task 8:
+the ASGI accessor is `MCPServer.streamable_http_app()`, and the SDK enables DNS-rebinding
+protection by default, so the worker's Compose hostname must appear in an allowed-hosts list
+or every call is rejected.
