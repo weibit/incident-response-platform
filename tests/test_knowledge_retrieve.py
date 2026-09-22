@@ -1,12 +1,19 @@
+import json
 import os
 from pathlib import Path
+from uuid import uuid4
 
 import pytest
 from psycopg.rows import dict_row
 from psycopg_pool import AsyncConnectionPool
 
 from incident_platform.knowledge.chunker import chunk_markdown
-from incident_platform.knowledge.index import embed_corpus, ingest_documents, prune_missing
+from incident_platform.knowledge.index import (
+    embed_corpus,
+    ingest_documents,
+    ingest_resolved_incidents,
+    prune_missing,
+)
 from incident_platform.knowledge.retrieve import MAX_SNIPPETS, dense_ids, search
 from incident_platform.storage import Store
 
@@ -217,3 +224,59 @@ async def test_dense_leg_returns_ids_with_a_stub_provider(pool):
     await embed_corpus(pool, embedder)
     ids = await dense_ids(pool, embedder, kind="runbook", service="checkout", query="rollback")
     assert ids
+
+
+async def test_indexes_only_resolved_incidents(pool):
+    resolved, active = str(uuid4()), str(uuid4())
+    async with pool.connection() as conn:
+        for identifier, status in ((resolved, "resolved"), (active, "investigating")):
+            await conn.execute(
+                "INSERT INTO incidents(incident_id, correlation_id, state) VALUES(%s,%s,%s) "
+                "ON CONFLICT (incident_id) DO UPDATE SET state=EXCLUDED.state",
+                (
+                    identifier,
+                    identifier,
+                    json.dumps(
+                        {
+                            "status": status,
+                            "incident": {"service": "checkout", "summary": "Checkout timing out"},
+                            "rca": {"hypothesis": "Release v2 timeout regression"},
+                        }
+                    ),
+                ),
+            )
+    count = await ingest_resolved_incidents(pool)
+    assert count >= 1
+    async with pool.connection() as conn:
+        rows = await (
+            await conn.execute(
+                "SELECT doc_id FROM knowledge_document WHERE kind='incident' AND doc_id = ANY(%s)",
+                ([resolved, active],),
+            )
+        ).fetchall()
+    found = {row["doc_id"] for row in rows}
+    assert resolved in found
+    assert active not in found
+
+
+async def test_similar_incident_search_finds_the_rca(pool):
+    identifier = str(uuid4())
+    async with pool.connection() as conn:
+        await conn.execute(
+            "INSERT INTO incidents(incident_id, correlation_id, state) VALUES(%s,%s,%s) "
+            "ON CONFLICT (incident_id) DO UPDATE SET state=EXCLUDED.state",
+            (
+                identifier,
+                identifier,
+                json.dumps(
+                    {
+                        "status": "resolved",
+                        "incident": {"service": "checkout", "summary": "Checkout timing out"},
+                        "rca": {"hypothesis": "Release v2 timeout regression"},
+                    }
+                ),
+            ),
+        )
+    await ingest_resolved_incidents(pool)
+    snippets = await search(pool, kind="incident", service="checkout", query="timeout regression")
+    assert any("regression" in s.body for s in snippets)

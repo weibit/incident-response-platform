@@ -1,4 +1,5 @@
 import asyncio
+import hashlib
 import sys
 from pathlib import Path
 
@@ -6,7 +7,7 @@ from psycopg.rows import dict_row
 from psycopg_pool import AsyncConnectionPool
 
 from incident_platform.config import settings
-from incident_platform.knowledge.chunker import Document, chunk_markdown
+from incident_platform.knowledge.chunker import Chunk, Document, chunk_markdown
 
 CORPUS = Path("docs/runbooks")
 
@@ -127,6 +128,43 @@ async def embed_corpus(pool, embedder) -> int:
     return len(rows)
 
 
+RESOLVED_SQL = """
+SELECT incident_id, state FROM incidents
+WHERE state->>'status' = 'resolved' AND state->'rca'->>'hypothesis' IS NOT NULL
+"""
+
+
+async def ingest_resolved_incidents(pool) -> int:
+    """Index resolved incidents so similar_incidents has a corpus.
+
+    Cold-starts empty, which is correct: with no history there is no precedent, and
+    the backend reports an empty result as untrusted rather than inventing one.
+    """
+    async with pool.connection() as conn:
+        rows = await (await conn.execute(RESOLVED_SQL)).fetchall()
+    documents = []
+    for row in rows:
+        state = row["state"]
+        incident = state.get("incident") or {}
+        summary = incident.get("summary") or ""
+        hypothesis = (state.get("rca") or {}).get("hypothesis") or ""
+        body = f"Summary: {summary}\nRoot cause: {hypothesis}"
+        doc_id = row["incident_id"]
+        digest = hashlib.sha256(f"{doc_id}:0::{body}".encode()).hexdigest()
+        documents.append(
+            Document(
+                doc_id=doc_id,
+                title=summary or doc_id,
+                service=incident.get("service"),
+                source=f"incident:{doc_id}",
+                chunks=[Chunk(chunk_id=digest[:32], heading="", body=body, ordinal=0)],
+            )
+        )
+    if not documents:
+        return 0
+    return await ingest_documents(pool, documents, kind="incident")
+
+
 async def main() -> None:
     cfg = settings()
     pool = AsyncConnectionPool(
@@ -144,9 +182,12 @@ async def main() -> None:
         corpus = load_corpus()
         count = await ingest_documents(pool, corpus, kind="runbook")
         pruned = await prune_missing(pool, corpus, kind="runbook")
+        incidents = await ingest_resolved_incidents(pool)
+        # After the incident ingest, so chunks from both corpora are embedded in one run.
         embedded = await embed_corpus(pool, provider(cfg))
         print(
-            f"indexed {count} runbook chunks, pruned {pruned} documents, embedded {embedded}",
+            f"indexed {count} runbook chunks, pruned {pruned} documents, "
+            f"{incidents} incident chunks, embedded {embedded}",
             file=sys.stderr,
         )
     finally:
