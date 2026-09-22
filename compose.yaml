@@ -48,7 +48,9 @@ services:
   init:
     <<: *app
     restart: "no"
-    command: ["python", "-m", "incident_platform.bootstrap"]
+    command:
+      ["sh", "-c",
+       "python -m incident_platform.bootstrap && python -m incident_platform.knowledge.index"]
     depends_on:
       postgres: {condition: service_healthy}
       kafka: {condition: service_healthy}
@@ -62,11 +64,22 @@ services:
       interval: 10s
       timeout: 5s
       retries: 6
+  runbooks:
+    <<: *app
+    command: ["python", "-m", "incident_platform.knowledge.server"]
+    depends_on:
+      init: {condition: service_completed_successfully}
+    healthcheck:
+      test: ["CMD", "python", "-c", "import socket; socket.create_connection(('localhost',8080),2)"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
   worker:
     <<: *app
     command: ["python", "-m", "incident_platform.worker.main"]
     depends_on:
       init: {condition: service_completed_successfully}
+      runbooks: {condition: service_healthy}
 volumes:
   pgdata:
   kafkadata:
