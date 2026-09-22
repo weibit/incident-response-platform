@@ -684,6 +684,7 @@ Expected: FAIL with `ModuleNotFoundError: No module named 'incident_platform.kno
 Create `src/incident_platform/knowledge/retrieve.py`:
 
 ```python
+import re
 from dataclasses import dataclass
 
 RRF_K = 60
@@ -1031,7 +1032,28 @@ async def test_respects_the_snippet_cap(pool):
         query="release rollback timeout approval",
         limit=99,
     )
-    assert len(snippets) <= MAX_SNIPPETS
+    # This query matches more chunks than the cap, so the assertion is exact rather
+    # than vacuous. An empty result would satisfy "<= MAX_SNIPPETS" and prove nothing.
+    assert len(snippets) == MAX_SNIPPETS
+
+
+async def test_a_multi_word_query_ors_its_terms(pool):
+    # ANDing the terms would return nothing here: no single chunk contains all of
+    # them. An investigator's query is a description, not a conjunction.
+    await ingest_documents(pool, _corpus(), kind="runbook")
+    snippets = await search(
+        pool, kind="runbook", service="checkout", query="checkout error rate spike after release"
+    )
+    assert snippets
+    assert snippets[0].doc_id == "checkout-rollback"
+
+
+async def test_a_query_with_no_usable_terms_returns_empty(pool):
+    # Empty, punctuation-only and stopword-only queries must degrade to no results
+    # rather than raising a tsquery syntax error.
+    await ingest_documents(pool, _corpus(), kind="runbook")
+    for query in ("", "   ", "!!!", "the a of"):
+        assert await search(pool, kind="runbook", service="checkout", query=query) == []
 ```
 
 - [ ] **Step 2: Run test to verify it fails**
@@ -1044,13 +1066,27 @@ Expected: FAIL with `ImportError: cannot import name 'search'`.
 Append to `src/incident_platform/knowledge/retrieve.py`:
 
 ```python
+TERM = re.compile(r"\w+")
+
+
+def _tsquery(query: str) -> str:
+    """OR the query terms.
+
+    plainto_tsquery ANDs them, which makes a realistic multi-word investigator query
+    match nothing at all, because chunks are only a few sentences long. Relevance
+    belongs to ranking, not to requiring every term in one chunk. Dropping non-word
+    characters also means no tsquery metacharacter survives into the query.
+    """
+    return " | ".join(TERM.findall(query.lower()))
+
+
 LEXICAL_SQL = """
 SELECT c.chunk_id, c.doc_id, d.title, c.heading, c.body, d.source
 FROM knowledge_chunk c JOIN knowledge_document d USING(doc_id)
 WHERE d.kind = %(kind)s
   AND (d.service IS NULL OR d.service = %(service)s)
-  AND c.tsv @@ plainto_tsquery('english', %(query)s)
-ORDER BY ts_rank_cd(c.tsv, plainto_tsquery('english', %(query)s)) DESC, c.chunk_id
+  AND c.tsv @@ to_tsquery('english', %(tsq)s)
+ORDER BY ts_rank_cd(c.tsv, to_tsquery('english', %(tsq)s)) DESC, c.chunk_id
 LIMIT %(limit)s
 """
 
@@ -1087,7 +1123,10 @@ async def search(
     Documents with a NULL service are global and always eligible.
     """
     limit = max(1, min(limit, MAX_SNIPPETS))
-    params = {"kind": kind, "service": service, "query": query, "limit": MAX_SNIPPETS}
+    # Always fetch MAX_SNIPPETS candidates regardless of `limit`. Fusion needs more
+    # material than the caller ultimately wants, and the dense leg added later fuses
+    # against this list before the final trim.
+    params = {"kind": kind, "service": service, "tsq": _tsquery(query), "limit": MAX_SNIPPETS}
     async with pool.connection() as conn:
         rows = await (await conn.execute(LEXICAL_SQL, params)).fetchall()
     by_id = {
@@ -1659,7 +1698,7 @@ class KnowledgeEvidenceBackend:
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `uv run pytest tests/test_knowledge_backend.py -v`
-Expected: PASS, 10 tests.
+Expected: PASS, 12 tests.
 
 - [ ] **Step 5: Commit**
 
@@ -2254,7 +2293,10 @@ async def search(
     Documents with a NULL service are global and always eligible.
     """
     limit = max(1, min(limit, MAX_SNIPPETS))
-    params = {"kind": kind, "service": service, "query": query, "limit": MAX_SNIPPETS}
+    # Always fetch MAX_SNIPPETS candidates regardless of `limit`. Fusion needs more
+    # material than the caller ultimately wants, and the dense leg added later fuses
+    # against this list before the final trim.
+    params = {"kind": kind, "service": service, "tsq": _tsquery(query), "limit": MAX_SNIPPETS}
     async with pool.connection() as conn:
         rows = await (await conn.execute(LEXICAL_SQL, params)).fetchall()
     by_id = {
