@@ -172,4 +172,25 @@ async def test_respects_the_snippet_cap(pool):
         query="release rollback timeout approval",
         limit=99,
     )
-    assert len(snippets) <= MAX_SNIPPETS
+    # This query matches more chunks than the cap, so the assertion is exact rather
+    # than vacuous. An empty result would satisfy "<= MAX_SNIPPETS" and prove nothing.
+    assert len(snippets) == MAX_SNIPPETS
+
+
+async def test_a_multi_word_query_ors_its_terms(pool):
+    # ANDing the terms would return nothing here: no single chunk contains all of
+    # them. An investigator's query is a description, not a conjunction.
+    await ingest_documents(pool, _corpus(), kind="runbook")
+    snippets = await search(
+        pool, kind="runbook", service="checkout", query="checkout error rate spike after release"
+    )
+    assert snippets
+    assert snippets[0].doc_id == "checkout-rollback"
+
+
+async def test_a_query_with_no_usable_terms_returns_empty(pool):
+    # Empty, punctuation-only and stopword-only queries must degrade to no results
+    # rather than raising a tsquery syntax error.
+    await ingest_documents(pool, _corpus(), kind="runbook")
+    for query in ("", "   ", "!!!", "the a of"):
+        assert await search(pool, kind="runbook", service="checkout", query=query) == []

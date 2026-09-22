@@ -1,3 +1,4 @@
+import re
 from dataclasses import dataclass
 
 RRF_K = 60
@@ -34,13 +35,27 @@ def fuse(rankings: list[list[str]]) -> list[str]:
     return sorted(order, key=lambda key: (-scores[key], order.index(key)))
 
 
+TERM = re.compile(r"\w+")
+
+
+def _tsquery(query: str) -> str:
+    """OR the query terms.
+
+    plainto_tsquery ANDs them, which makes a realistic multi-word investigator query
+    match nothing at all, because chunks are only a few sentences long. Relevance
+    belongs to ranking, not to requiring every term in one chunk. Dropping non-word
+    characters also means no tsquery metacharacter survives into the query.
+    """
+    return " | ".join(TERM.findall(query.lower()))
+
+
 LEXICAL_SQL = """
 SELECT c.chunk_id, c.doc_id, d.title, c.heading, c.body, d.source
 FROM knowledge_chunk c JOIN knowledge_document d USING(doc_id)
 WHERE d.kind = %(kind)s
   AND (d.service IS NULL OR d.service = %(service)s)
-  AND c.tsv @@ plainto_tsquery('english', %(query)s)
-ORDER BY ts_rank_cd(c.tsv, plainto_tsquery('english', %(query)s)) DESC, c.chunk_id
+  AND c.tsv @@ to_tsquery('english', %(tsq)s)
+ORDER BY ts_rank_cd(c.tsv, to_tsquery('english', %(tsq)s)) DESC, c.chunk_id
 LIMIT %(limit)s
 """
 
@@ -77,7 +92,10 @@ async def search(
     Documents with a NULL service are global and always eligible.
     """
     limit = max(1, min(limit, MAX_SNIPPETS))
-    params = {"kind": kind, "service": service, "query": query, "limit": MAX_SNIPPETS}
+    # Always fetch MAX_SNIPPETS candidates regardless of `limit`. Fusion needs more
+    # material than the caller ultimately wants, and the dense leg added later fuses
+    # against this list before the final trim.
+    params = {"kind": kind, "service": service, "tsq": _tsquery(query), "limit": MAX_SNIPPETS}
     async with pool.connection() as conn:
         rows = await (await conn.execute(LEXICAL_SQL, params)).fetchall()
     by_id = {
