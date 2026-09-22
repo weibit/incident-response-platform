@@ -278,6 +278,46 @@ def test_empty_body_is_rejected():
     body = "---\nid: x\ntitle: T\n---\n\n\n"
     with pytest.raises(CorpusError, match="empty"):
         chunk_markdown(body, source="a.md")
+
+
+# Built rather than written literally so this test file can itself live inside a
+# fenced block in the plan document.
+BACKTICKS = "`" * 3
+
+
+def fenced(marker: str) -> str:
+    return (
+        "---\nid: fenced\ntitle: Fenced\n---\n\n"
+        "## Steps\n\nRun this:\n\n"
+        f"{marker}bash\n# restart the service\nsystemctl restart checkout\n{marker}\n\n"
+        "Then confirm it came back.\n"
+    )
+
+
+@pytest.mark.parametrize("marker", [BACKTICKS, "~~~"])
+def test_a_comment_inside_a_code_fence_is_not_a_heading(marker):
+    # Runbooks are mostly shell snippets. Splitting on a shell comment would tear a
+    # command away from the context that explains it.
+    doc = chunk_markdown(fenced(marker), source="a.md")
+    assert [c.heading for c in doc.chunks] == ["Steps"]
+    assert "systemctl restart checkout" in doc.chunks[0].body
+    assert "Then confirm it came back." in doc.chunks[0].body
+
+
+def test_inserting_a_section_does_not_churn_the_ids_below_it():
+    before = "---\nid: x\ntitle: T\n---\n\n## A\n\nAlpha.\n\n## B\n\nBravo.\n"
+    after = "---\nid: x\ntitle: T\n---\n\n## New\n\nNovel.\n\n## A\n\nAlpha.\n\n## B\n\nBravo.\n"
+    original = {c.heading: c.chunk_id for c in chunk_markdown(before, source="a.md").chunks}
+    edited = {c.heading: c.chunk_id for c in chunk_markdown(after, source="a.md").chunks}
+    assert original["A"] == edited["A"]
+    assert original["B"] == edited["B"]
+
+
+def test_identical_sections_collapse_to_one_chunk():
+    text = "---\nid: x\ntitle: T\n---\n\n## A\n\nSame.\n\n## A\n\nSame.\n"
+    doc = chunk_markdown(text, source="a.md")
+    assert len(doc.chunks) == 1
+    assert [c.ordinal for c in doc.chunks] == [0]
 ```
 
 - [ ] **Step 2: Run test to verify it fails**
@@ -296,7 +336,8 @@ import hashlib
 import re
 from dataclasses import dataclass, field
 
-HEADING = re.compile(r"^(#{1,6})\s+(.*)$")
+HEADING = re.compile(r"^#{1,6}\s+(.*)$")
+FENCE = re.compile(r"^\s*(?:```|~~~)")
 FRONTMATTER = re.compile(r"\A---\r?\n(.*?)\r?\n---\r?\n", re.DOTALL)
 
 
@@ -346,22 +387,32 @@ def chunk_markdown(text: str, source: str) -> Document:
     service = fields.get("service") or None
 
     sections: list[tuple[str, list[str]]] = [("", [])]
+    fenced = False
     for line in body.splitlines():
-        heading = HEADING.match(line)
+        if FENCE.match(line):
+            fenced = not fenced
+        # A shell comment inside a fenced block is not a heading. Runbooks are mostly
+        # shell snippets, so splitting on one would tear a command from its context.
+        heading = None if fenced else HEADING.match(line)
         if heading:
-            sections.append((heading.group(2).strip(), []))
+            sections.append((heading.group(1).strip(), []))
         else:
             sections[-1][1].append(line)
 
     chunks: list[Chunk] = []
+    seen: set[str] = set()
     for heading, lines in sections:
         content = "\n".join(lines).strip()
         if not content:
             continue
-        ordinal = len(chunks)
-        # Hash content, not the file path, so renaming a file does not churn every id.
-        digest = hashlib.sha256(f"{doc_id}:{ordinal}:{heading}:{content}".encode()).hexdigest()
-        chunks.append(Chunk(chunk_id=digest[:32], heading=heading, body=content, ordinal=ordinal))
+        # Hash content and heading only. Not the file path, so renaming does not churn
+        # ids; not the position, so inserting a section above does not churn every id
+        # below it. Identical sections collapse to one chunk, which is what they are.
+        chunk_id = hashlib.sha256(f"{doc_id}:{heading}:{content}".encode()).hexdigest()[:32]
+        if chunk_id in seen:
+            continue
+        seen.add(chunk_id)
+        chunks.append(Chunk(chunk_id=chunk_id, heading=heading, body=content, ordinal=len(chunks)))
 
     if not chunks:
         raise CorpusError(f"{source}: document body is empty")
@@ -373,7 +424,7 @@ Note on the frontmatter parser: this reads a deliberately small key/value subset
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `uv run pytest tests/test_knowledge_chunker.py -v`
-Expected: PASS, 6 tests.
+Expected: PASS, 10 test items (one test is parametrized over both fence markers).
 
 - [ ] **Step 5: Lint**
 
