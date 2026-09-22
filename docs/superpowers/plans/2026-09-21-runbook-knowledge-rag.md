@@ -739,7 +739,9 @@ def load_corpus(directory: Path = CORPUS) -> list[Document]:
     seen: dict[str, str] = {}
     for doc in documents:
         if doc.doc_id in seen:
-            raise ValueError(f"Duplicate runbook id {doc.doc_id!r} in {doc.source} and {seen[doc.doc_id]}")
+            raise ValueError(
+                f"Duplicate runbook id {doc.doc_id!r} in {doc.source} and {seen[doc.doc_id]}"
+            )
         seen[doc.doc_id] = doc.source
     return documents
 
@@ -820,7 +822,10 @@ async def test_returns_empty_for_a_nonmatching_query(pool):
 async def test_respects_the_snippet_cap(pool):
     await ingest_documents(pool, _corpus(), kind="runbook")
     snippets = await search(
-        pool, kind="runbook", service="checkout", query="release rollback timeout approval",
+        pool,
+        kind="runbook",
+        service="checkout",
+        query="release rollback timeout approval",
         limit=99,
     )
     assert len(snippets) <= MAX_SNIPPETS
@@ -871,7 +876,9 @@ def _cap(snippets: list[Snippet]) -> list[Snippet]:
     return capped
 
 
-async def search(pool, kind: str, service: str, query: str, limit: int = MAX_SNIPPETS) -> list[Snippet]:
+async def search(
+    pool, kind: str, service: str, query: str, limit: int = MAX_SNIPPETS
+) -> list[Snippet]:
     """Hybrid search. Lexical always; the dense leg is added in Task 14.
 
     Documents with a NULL service are global and always eligible.
@@ -1139,7 +1146,12 @@ from incident_platform.knowledge.retrieve import search
 cfg = settings()
 mcp = MCPServer("incident-runbooks")
 pool = AsyncConnectionPool(
-    cfg.database_url, open=False, min_size=1, max_size=8, kwargs={"row_factory": dict_row}, timeout=3
+    cfg.database_url,
+    open=False,
+    min_size=1,
+    max_size=8,
+    kwargs={"row_factory": dict_row},
+    timeout=3,
 )
 
 
@@ -1283,7 +1295,10 @@ async def test_maps_snippets_to_one_evidence(cfg):
     client = FakeClient([SNIPPET])
     evidence = await backend(client, cfg).query("runbooks", "checkout", "rollback")
     assert client.calls == [
-        ("search_runbooks", {"service": "checkout", "query": "rollback", "limit": cfg.knowledge_top_k})
+        (
+            "search_runbooks",
+            {"service": "checkout", "query": "rollback", "limit": cfg.knowledge_top_k},
+        )
     ]
     assert evidence.tool == "runbooks"
     assert evidence.trusted is True
@@ -1961,9 +1976,7 @@ async def embed_corpus(pool, embedder) -> int:
     await ensure_vector_column(pool, embedder.dim)
     async with pool.connection() as conn:
         rows = await (
-            await conn.execute(
-                "SELECT chunk_id, body FROM knowledge_chunk WHERE embedding IS NULL"
-            )
+            await conn.execute("SELECT chunk_id, body FROM knowledge_chunk WHERE embedding IS NULL")
         ).fetchall()
     if not rows:
         return 0

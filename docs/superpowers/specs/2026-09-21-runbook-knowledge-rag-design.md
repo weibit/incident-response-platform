@@ -164,6 +164,7 @@ class KnowledgeEvidenceBackend:
         if tool not in ("runbooks", "similar_incidents"):
             return await self.inner.query(tool, service, query)
         ...
+
     async def verify(self, service, execution):
         return await self.inner.verify(service, execution)
 ```
