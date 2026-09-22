@@ -11,18 +11,40 @@ only read-only tools. Do not invent observations. Planning cannot execute action
 Return only the requested structured result."""
 
 
+def _model(cfg, alias: str):
+    """Build one gateway-backed chat model.
+
+    Isolated so tests can substitute it without a gateway, the same pattern the embedding
+    provider uses. The alias is a gateway name, not a provider model, so the application
+    never names a provider.
+    """
+    return init_chat_model(
+        f"openai:{alias}",
+        base_url=cfg.litellm_base_url,
+        api_key=cfg.litellm_api_key.get_secret_value(),
+        timeout=30,
+        max_retries=2,
+    )
+
+
 class Analyst:
     def __init__(self, cfg):
         self.cfg = cfg
-        self.model = (
-            None if cfg.mock_mode else init_chat_model(cfg.llm_model, timeout=30, max_retries=2)
+        self.models = (
+            {}
+            if cfg.mock_mode
+            else {
+                "triage": _model(cfg, cfg.triage_model),
+                "rca": _model(cfg, cfg.rca_model),
+                "plan": _model(cfg, cfg.plan_model),
+            }
         )
 
-    async def structured(self, schema, task, state):
+    async def structured(self, role, schema, task, state):
         prompt = ChatPromptTemplate.from_messages(
             [("system", SYSTEM), ("human", "Task: {task}\nIncident data: {data}")]
         )
-        chain = prompt | self.model.with_structured_output(schema)
+        chain = prompt | self.models[role].with_structured_output(schema)
         return await chain.ainvoke({"task": task, "data": json.dumps(state)})
 
     async def triage(self, state):
@@ -32,7 +54,9 @@ class Analyst:
                 investigate=True,
                 reason="Simulated triage: investigate reported degradation",
             )
-        return await self.structured(Triage, "Assess severity and need for investigation", state)
+        return await self.structured(
+            "triage", Triage, "Assess severity and need for investigation", state
+        )
 
     async def investigate(self, state):
         if self.cfg.mock_mode:
@@ -53,10 +77,11 @@ class Analyst:
                 ),
             )
         return await self.structured(
+            "rca",
             InvestigationStep,
-            "Choose one read tool or conclude RCA. Tools: logs, metrics, kubernetes, deployments, "
-            "config_diffs, topology, runbooks, similar_incidents. Retrieval is optional. "
-            "Conclude only with corroborating evidence.",
+            "Choose one read tool or conclude RCA. Tools: logs, metrics, kubernetes, "
+            "deployments, config_diffs, topology, runbooks, similar_incidents. Retrieval "
+            "is optional. Conclude only with corroborating evidence.",
             state,
         )
 
@@ -70,6 +95,7 @@ class Analyst:
                 verification="Observe error rate <1% and latency p95 <500ms for 5 minutes",
             )
         return await self.structured(
+            "plan",
             PlanDraft,
             "Propose observe, restart_workload, or rollback_deployment. "
             "Include rollback and verification. "
