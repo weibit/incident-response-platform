@@ -432,6 +432,7 @@ git commit -m "build: add langchain-openai for the gateway protocol"
 
 **Files:**
 - Modify: `src/incident_platform/config.py`
+- Modify: `tests/test_config_knowledge.py` (two call sites, see Step 5)
 - Test: `tests/test_config_gateway.py`
 
 - [ ] **Step 1: Write the failing test**
@@ -564,13 +565,34 @@ class Settings(BaseSettings):
 Run: `uv run pytest tests/test_config_gateway.py -v`
 Expected: PASS, 7 tests.
 
-- [ ] **Step 5: Check the existing suite**
+- [ ] **Step 5: Update the two pre-existing tests this rule invalidates**
 
 ```bash
 uv run pytest -q
 ```
 
-Expected: `tests/test_config_knowledge.py` may assert the old `knowledge_mcp_url` default of `http://runbooks:8080/mcp`. If it fails on that, update that single assertion to the gateway URL — the change is intentional and this plan's Task 9 removes the direct path entirely. If it fails for any other reason, stop and report.
+Expected at this point: **2 failed, 78 passed, 22 skipped**. Both
+`test_enabling_with_a_duplicate_token_is_rejected` and
+`test_enabling_with_a_distinct_token_is_accepted` in `tests/test_config_knowledge.py`
+construct `Settings(knowledge_enabled=True, ...)` with no gateway key, which the new rule
+rejects before their own assertion is reached.
+
+That is intended behavior, not a regression: retrieval is gateway-only, so enabling it
+without a gateway credential is a misconfiguration that must fail at startup. Add
+`litellm_api_key="gateway"` to those two call sites only, with a short comment on each saying
+why the key is now required there.
+
+Do **not** add it to the shared `BASE` dict, and do **not** touch
+`test_enabling_without_a_token_is_rejected`. That one still passes because the knowledge-token
+check runs before the gateway check and raises first; the ordering is load-bearing for it.
+
+Then re-run:
+
+```bash
+uv run pytest -q
+```
+
+Expected: 80 passed, 22 skipped. If anything else fails, stop and report.
 
 - [ ] **Step 6: Commit**
 
