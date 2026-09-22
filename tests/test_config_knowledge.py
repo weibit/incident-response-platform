@@ -24,12 +24,19 @@ def test_enabling_without_a_token_is_rejected():
 
 
 def test_enabling_with_a_duplicate_token_is_rejected():
+    # Retrieval is gateway-only, so a gateway key is required here too; supply a
+    # distinct one so the duplicate knowledge_mcp_token is what trips the check.
     with pytest.raises(ValueError, match="distinct"):
-        Settings(**BASE, knowledge_enabled=True, knowledge_mcp_token="status")
+        Settings(
+            **BASE, knowledge_enabled=True, knowledge_mcp_token="status", litellm_api_key="gateway"
+        )
 
 
 def test_enabling_with_a_distinct_token_is_accepted():
-    cfg = Settings(**BASE, knowledge_enabled=True, knowledge_mcp_token="knowledge")
+    # Retrieval is gateway-only, so enabling it requires a gateway credential too.
+    cfg = Settings(
+        **BASE, knowledge_enabled=True, knowledge_mcp_token="knowledge", litellm_api_key="gateway"
+    )
     assert cfg.knowledge_mcp_token.get_secret_value() == "knowledge"
 
 

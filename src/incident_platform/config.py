@@ -22,9 +22,16 @@ class Settings(BaseSettings):
     approval_ttl_seconds: int = Field(default=3600, ge=1)
     mock_mode: bool = True
     llm_model: str = "anthropic:claude-sonnet-4-5"
+    # Gateway aliases, not provider model names. LiteLLM maps these to real models, so
+    # changing which model serves a role is a gateway config change, not a redeploy.
+    llm_model_triage: str | None = None
+    llm_model_rca: str | None = None
+    llm_model_plan: str | None = None
+    litellm_base_url: str = "http://litellm:4000"
+    litellm_api_key: SecretStr = SecretStr("")
     langfuse_enabled: bool = False
     knowledge_enabled: bool = False
-    knowledge_mcp_url: str = "http://runbooks:8080/mcp"
+    knowledge_mcp_url: str = "http://litellm:4000/mcp"
     knowledge_mcp_token: SecretStr = SecretStr("")
     # The MCP SDK enables DNS-rebinding protection by default and rejects any Host
     # header not listed here. The worker reaches the server by its Compose name.
@@ -32,6 +39,18 @@ class Settings(BaseSettings):
     knowledge_top_k: int = Field(default=5, ge=1, le=5)
     embedding_model: str | None = None
     embedding_dim: int | None = Field(default=None, ge=1, le=4096)
+
+    @property
+    def triage_model(self) -> str:
+        return self.llm_model_triage or self.llm_model
+
+    @property
+    def rca_model(self) -> str:
+        return self.llm_model_rca or self.llm_model
+
+    @property
+    def plan_model(self) -> str:
+        return self.llm_model_plan or self.llm_model
 
     @model_validator(mode="after")
     def validate_credentials(self):
@@ -48,6 +67,12 @@ class Settings(BaseSettings):
             if not self.knowledge_mcp_token.get_secret_value():
                 raise ValueError("knowledge_mcp_token is required when knowledge_enabled is true")
             secrets.append(self.knowledge_mcp_token)
+        if self.knowledge_enabled or not self.mock_mode:
+            # Both paths reach the gateway: retrieval is gateway-only, and a live analyst
+            # calls models through it. Fail at startup rather than at the first call.
+            if not self.litellm_api_key.get_secret_value():
+                raise ValueError("litellm_api_key is required when the gateway is in use")
+            secrets.append(self.litellm_api_key)
         values = [value.get_secret_value() for value in secrets]
         if any(not value for value in values) or len(set(values)) != len(values):
             raise ValueError("Configure nonempty, distinct credentials for each trust boundary")
