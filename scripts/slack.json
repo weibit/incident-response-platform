@@ -1,0 +1,1 @@
+{"type":"event_callback","event_id":"Ev-demo-42","event":{"incident":{"external_incident_id":"channel-C1-thread-42","summary":"Checkout is timing out","service":"checkout","severity":"high"}}}
