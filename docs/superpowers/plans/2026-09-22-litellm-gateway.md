@@ -37,7 +37,7 @@ Nothing is written in this task. It exists because the previous plan in this rep
 
 **Files:** none modified.
 
-- [ ] **Step 1: Pin and pull the image**
+- [x] **Step 1: Pin and pull the image**
 
 ```bash
 docker pull ghcr.io/berriai/litellm:v1.90.2
@@ -46,7 +46,7 @@ docker run --rm ghcr.io/berriai/litellm:v1.90.2 --help 2>&1 | head -40
 
 Expected: the help text lists a `--config` flag and a `--port` flag. Record the exact version you pulled; use that same tag in Task 8. If `v1.90.2` no longer exists, pick the newest stable tag, record it, and continue.
 
-- [ ] **Step 2: Confirm the config keys against the image, not the docs**
+- [x] **Step 2: Confirm the config keys against the image, not the docs**
 
 ```bash
 docker run --rm ghcr.io/berriai/litellm:v1.90.2 \
@@ -62,11 +62,61 @@ Record which of these the installed version accepts in `config.yaml`: `model_lis
 
 **If `allowed_tools` is not supported on `mcp_servers` in this version, stop and report.** The design leans on it as the second enforcement layer for the read-only guarantee. Do not silently drop it.
 
-- [ ] **Step 3: Record the facts in the plan file**
+### Verified LiteLLM surface (recorded 2026-09-22)
+
+Evidence method: read the installed source inside the image (`litellm.proxy.proxy_server.ProxyConfig.load_config`/`get_config`, `litellm.proxy._experimental.mcp_server.mcp_server_manager.MCPServerManager.load_servers_from_config`, `litellm.types.router`, `litellm.types.mcp_server.mcp_server_manager.MCPServer`), then confirmed empirically by running the proxy against a trial `config.yaml` and inspecting `/v1/mcp/server` and `/health` on the live process. No claim below is from documentation.
+
+| Fact | Value |
+|---|---|
+| Image tag pulled | `ghcr.io/berriai/litellm:v1.90.2` (still current; no fallback needed) |
+| `litellm` package version inside image | `1.90.2` (via `importlib.metadata.version("litellm")`) |
+| Default port | `4000` — CLI `--port` default, and the image's own `CMD` is `["--port", "4000"]` (confirmed via `docker inspect`) |
+| Health endpoint (unauthenticated liveness) | `GET /health/liveliness` (alias `GET /health/liveness`) → returns `"I'm alive!"`. No `user_api_key_auth` dependency. Confirmed by curling a live trial container. |
+| Health endpoint (unauthenticated readiness) | `GET /health/readiness` → `{"status": "healthy", "db": "..."}`. No auth dependency. Confirmed live. |
+| Health endpoint (authenticated, pings configured models) | `GET /health` → requires `Authorization: Bearer <master_key>`; iterates `model_list` and attempts a real completion per deployment. Confirmed live (returned `unhealthy_endpoints` with a DNS-resolution error for the fake `api_base`, which proves it read `model_name`/`litellm_params.model/api_base/api_key` correctly). |
+| `model_list[].model_name` | **Supported.** `litellm.types.router.Deployment.model_name: str` (required). Confirmed live: appeared as `model_id`/model reference in `/health` output. |
+| `model_list[].litellm_params.model` | **Supported, required.** `litellm.types.router.LiteLLM_Params.model: str`. Read directly via `model["litellm_params"]["model"]` in `proxy_server.py` (`ProxyConfig.load_config`, "MODEL LIST" section). |
+| `model_list[].litellm_params.api_base` | **Supported.** `LiteLLMParamsTypedDict.api_base: Optional[str]`. Read via `model["litellm_params"].get("api_base", None)`. Confirmed live (the trial run's fake `api_base` value flowed through to the actual outbound HTTP request logged in `/health`). |
+| `model_list[].litellm_params.api_key` | **Supported.** `LiteLLMParamsTypedDict.api_key: Optional[str]`, `GenericLiteLLMParams`/`LiteLLM_Params` field. `os.environ/`-prefixed values are resolved via `get_secret`. |
+| `mcp_servers` **shape** | **Correction to this task's own wording above.** It is **not** a list of objects each carrying a `server_name` field. It is a **mapping (dict) keyed by server name**: `mcp_servers: {<server_name>: {url: ..., transport: ..., ...}}`. Confirmed by source (`for server_name, server_config in mcp_servers_config.items()` in `mcp_server_manager.py`) and live: a trial config with `mcp_servers.runbooks.{url,transport,available_on_public_internet,allowed_tools}` produced a server with `"server_name": "runbooks"` in `GET /v1/mcp/server`, with `server_name` taken from the dict key, not from a nested field. **Task 8 must write `deploy/litellm/config.yaml` using this mapping shape, not a list.** |
+| `mcp_servers.<name>.url` | **Supported.** `MCPServer.url: Optional[str]`, read via `server_config.get("url", None)`. Confirmed live: exact value round-tripped in `/v1/mcp/server` output and the proxy attempted a real connection to it. |
+| `mcp_servers.<name>.transport` | **Supported.** `MCPServer.transport: MCPTransportType`, read via `server_config.get("transport", MCPTransport.http)`. **Valid literal values are `sse`, `http`, `stdio`** (`litellm.types.mcp.MCPTransport`) — there is no `"streamable_http"` literal; the streamable-HTTP transport (which is what the `runbooks` server speaks) is configured with `transport: http`. Confirmed live: with `transport: http` the proxy's outbound client used `mcp.client.streamable_http` (visible in the connection-failure traceback against the unreachable trial `runbooks` host), i.e. it is genuinely the streamable-HTTP client, not plain HTTP. |
+| `mcp_servers.<name>.available_on_public_internet` | **Supported.** `MCPServer.available_on_public_internet: bool` (default `True`), read via `bool(server_config.get("available_on_public_internet", True))`. Confirmed live: set to `false` in the trial config, round-tripped as `"available_on_public_internet": false` in `/v1/mcp/server`. |
+| `mcp_servers.<name>.allowed_tools` | **Supported.** `MCPServer.allowed_tools: Optional[List[str]]`, read via `server_config.get("allowed_tools", None)`. **Confirmed live**, not just by source: the trial config set `allowed_tools: [search_runbooks, search_similar_incidents]` and `GET /v1/mcp/server` echoed back exactly `"allowed_tools": ["search_runbooks", "search_similar_incidents"]`. This satisfies the stop-and-report condition above — no need to stop, the second enforcement layer is available. |
+| `general_settings.master_key` | **Supported.** Read via `general_settings.get("master_key", get_secret("LITELLM_MASTER_KEY", None))` in `ProxyConfig.load_config`. Confirmed live: the trial `master_key: sk-fake-master-key` was required as a Bearer token for `/health`, `/mcp/tools/list`, `/v1/mcp/server`; unauthenticated calls to those were rejected. |
+| `general_settings.store_model_in_db` | **Supported.** Read via `general_settings.get("store_model_in_db", False)` in `ProxyConfig.load_config`, then written back into `general_settings["store_model_in_db"]`. Set to `false` in the trial config; the process started without attempting to sync models from a DB (readiness reported `"db": "Not connected"`, consistent with no DB configured and `store_model_in_db: false`). |
+
+Trial config used for the live checks (not committed elsewhere, reconstruct if re-verifying):
+
+```yaml
+model_list:
+  - model_name: test-model
+    litellm_params:
+      model: openai/gpt-4o-mini
+      api_base: https://example.invalid
+      api_key: sk-fake-test-key
+
+mcp_servers:
+  runbooks:
+    url: http://runbooks:9000/mcp
+    transport: http
+    available_on_public_internet: false
+    allowed_tools:
+      - search_runbooks
+      - search_similar_incidents
+
+general_settings:
+  master_key: sk-fake-master-key
+  store_model_in_db: false
+```
+
+Run with: `docker run -d -p 14000:4000 -v $PWD/trial_config.yaml:/app/config.yaml:ro ghcr.io/berriai/litellm:v1.90.2 --config /app/config.yaml --port 4000`, then `curl http://127.0.0.1:14000/health/liveliness`, `curl -H "Authorization: Bearer sk-fake-master-key" http://127.0.0.1:14000/v1/mcp/server`. Container was stopped and removed after verification; it never touched the project's own Compose stack (separate container name, separate host port).
+
+- [x] **Step 3: Record the facts in the plan file**
 
 Append a table to this task listing what you confirmed: image tag, config keys accepted, health endpoint path, default port. Later tasks read that table rather than re-deriving it.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add docs/superpowers/plans/2026-09-22-litellm-gateway.md
