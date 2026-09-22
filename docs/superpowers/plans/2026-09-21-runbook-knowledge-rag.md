@@ -2542,6 +2542,11 @@ Add to the "Deliberate boundaries" list:
 - Retrieval evidence is procedure and precedent, not observation. A valid RCA must cite at
   least one observational tool (logs, metrics, kubernetes, deployments, config_diffs,
   topology); runbooks and similar incidents alone cannot establish a root cause.
+- Lexical ranking uses PostgreSQL `ts_rank_cd`, which weights term frequency and proximity
+  but applies no IDF and no query-coverage weighting. A chunk repeating one query term can
+  outrank a chunk covering more distinct terms. Measured on the seed corpus, the correct
+  document still ranks first, and enabling dense retrieval fuses a second opinion over the
+  same candidates. Replace the ranker before relying on lexical-only ordering at scale.
 ```
 
 Add to the "Layout" block after the `integrations/` line:
