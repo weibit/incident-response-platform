@@ -30,3 +30,17 @@ CREATE TABLE IF NOT EXISTS audit (
  id bigserial PRIMARY KEY, incident_id text NOT NULL, kind text NOT NULL,
  detail jsonb NOT NULL, created_at timestamptz NOT NULL DEFAULT now()
 );
+CREATE EXTENSION IF NOT EXISTS vector;
+CREATE TABLE IF NOT EXISTS knowledge_document (
+ doc_id text PRIMARY KEY, kind text NOT NULL, title text NOT NULL,
+ service text, source text NOT NULL, updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS knowledge_chunk (
+ chunk_id text PRIMARY KEY,
+ doc_id text NOT NULL REFERENCES knowledge_document(doc_id) ON DELETE CASCADE,
+ heading text NOT NULL DEFAULT '', body text NOT NULL, ordinal int NOT NULL,
+ embedding vector,
+ tsv tsvector GENERATED ALWAYS AS (to_tsvector('english', body)) STORED
+);
+CREATE INDEX IF NOT EXISTS knowledge_chunk_tsv ON knowledge_chunk USING gin(tsv);
+CREATE INDEX IF NOT EXISTS knowledge_chunk_doc ON knowledge_chunk(doc_id);

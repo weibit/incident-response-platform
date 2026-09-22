@@ -2,6 +2,8 @@ from datetime import UTC, datetime
 
 from incident_platform.models import RCA, Action, Evidence, Plan
 
+OBSERVATIONAL = {"logs", "metrics", "kubernetes", "deployments", "config_diffs", "topology"}
+
 
 def valid_rca(rca: dict, evidence: list[dict], mock_mode: bool) -> bool:
     result = RCA.model_validate(rca)
@@ -18,6 +20,9 @@ def valid_rca(rca: dict, evidence: list[dict], mock_mode: bool) -> bool:
             for e in cited
         )
         and len({e.tool for e in cited if e}) >= 2
+        # Runbooks and prior incidents are procedure and precedent, not observations of
+        # this incident. At least one citation must come from an observational tool.
+        and any(e is not None and e.tool in OBSERVATIONAL for e in cited)
     )
 
 

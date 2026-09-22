@@ -1,5 +1,6 @@
 import asyncio
 import hashlib
+from contextlib import AsyncExitStack
 from uuid import NAMESPACE_URL, uuid5
 
 import structlog
@@ -8,8 +9,10 @@ from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 from langgraph.types import Command
 
 from incident_platform.config import settings
+from incident_platform.integrations.knowledge_backend import KnowledgeEvidenceBackend
 from incident_platform.integrations.llm import Analyst
 from incident_platform.integrations.tools import MockEvidenceBackend, UnconfiguredEvidenceBackend
+from incident_platform.knowledge import mcp_client
 from incident_platform.models import Envelope
 from incident_platform.storage import Store
 from incident_platform.telemetry import configure_logging, graph_config
@@ -160,11 +163,15 @@ async def main():
     try:
         async with AsyncPostgresSaver.from_conn_string(cfg.database_url) as saver:
             backend = MockEvidenceBackend() if cfg.mock_mode else UnconfiguredEvidenceBackend()
-            graph = build_graph(cfg, store, Analyst(cfg), backend, saver)
-            async with asyncio.TaskGroup() as tasks:
-                tasks.create_task(ingest(store, cfg))
-                tasks.create_task(run_jobs(store, graph, cfg))
-                tasks.create_task(relay_forever(store, cfg))
+            async with AsyncExitStack() as stack:
+                if cfg.knowledge_enabled:
+                    client = await stack.enter_async_context(mcp_client(cfg))
+                    backend = KnowledgeEvidenceBackend(backend, client, cfg)
+                graph = build_graph(cfg, store, Analyst(cfg), backend, saver)
+                async with asyncio.TaskGroup() as tasks:
+                    tasks.create_task(ingest(store, cfg))
+                    tasks.create_task(run_jobs(store, graph, cfg))
+                    tasks.create_task(relay_forever(store, cfg))
     finally:
         await store.close()
         if cfg.langfuse_enabled:
