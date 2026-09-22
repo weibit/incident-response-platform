@@ -1,5 +1,22 @@
 from contextlib import asynccontextmanager
 
+from incident_platform.integrations.knowledge_backend import MCP_SERVER
+
+
+def gateway_headers(cfg) -> dict[str, str]:
+    """Headers for one MCP call through LiteLLM.
+
+    The gateway authenticates the caller with x-litellm-api-key and forwards the runbooks
+    server's own bearer token under x-mcp-<server>-authorization, so that server still
+    authenticates the call itself. Two boundaries, two credentials.
+    """
+    return {
+        "x-litellm-api-key": f"Bearer {cfg.litellm_api_key.get_secret_value()}",
+        f"x-mcp-{MCP_SERVER}-authorization": (
+            f"Bearer {cfg.knowledge_mcp_token.get_secret_value()}"
+        ),
+    }
+
 
 @asynccontextmanager
 async def mcp_client(cfg):
@@ -8,9 +25,7 @@ async def mcp_client(cfg):
     from mcp import ClientSession
     from mcp.client.streamable_http import streamable_http_client
 
-    token = cfg.knowledge_mcp_token.get_secret_value()
-    headers = {"Authorization": f"Bearer {token}"}
-    async with httpx2.AsyncClient(headers=headers, timeout=20.0) as http:
+    async with httpx2.AsyncClient(headers=gateway_headers(cfg), timeout=20.0) as http:
         async with streamable_http_client(cfg.knowledge_mcp_url, http_client=http) as streams:
             async with ClientSession(*streams[:2]) as session:
                 await session.initialize()
