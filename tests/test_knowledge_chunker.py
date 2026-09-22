@@ -101,3 +101,34 @@ def test_identical_sections_collapse_to_one_chunk():
     doc = chunk_markdown(text, source="a.md")
     assert len(doc.chunks) == 1
     assert [c.ordinal for c in doc.chunks] == [0]
+
+
+def test_a_different_fence_marker_does_not_close_an_open_block():
+    # A tilde divider inside a backtick block is terminal output, not a fence.
+    text = (
+        "---\nid: x\ntitle: T\n---\n\n## Steps\n\n"
+        f"{BACKTICKS}bash\nmake report\n~~~~~~~~\n# rows written: 42\n{BACKTICKS}\n\nDone.\n"
+    )
+    doc = chunk_markdown(text, source="a.md")
+    assert [c.heading for c in doc.chunks] == ["Steps"]
+    assert "rows written: 42" in doc.chunks[0].body
+
+
+def test_an_unclosed_fence_is_rejected():
+    # Failing loudly beats silently swallowing the rest of the document.
+    text = f"---\nid: x\ntitle: T\n---\n\nStart:\n\n{BACKTICKS}bash\necho hi\n\n## B\n\nBravo.\n"
+    with pytest.raises(CorpusError, match="unclosed"):
+        chunk_markdown(text, source="a.md")
+
+
+def test_leading_indentation_of_the_first_line_is_preserved():
+    text = "---\nid: x\ntitle: T\n---\n\n## A\n\n    # indented code\n    echo hi\n"
+    doc = chunk_markdown(text, source="a.md")
+    assert doc.chunks[0].body == "    # indented code\n    echo hi"
+
+
+def test_chunk_id_recipe_is_pinned():
+    # Stored evidence ids depend on this exact recipe. Changing the separator, the
+    # truncation length, or the hash must be a deliberate, visible decision.
+    doc = chunk_markdown("---\nid: x\ntitle: T\n---\n\n## A\n\nAlpha.\n", source="a.md")
+    assert doc.chunks[0].chunk_id == "9a0239ee161383c03c16f9626a631859"
