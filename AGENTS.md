@@ -16,3 +16,7 @@ Preserve these invariants:
 - Mock evidence and execution must stay clearly labeled. Live adapters fail closed until implemented.
 - Keep SQL migrations additive; never drop existing user data as part of setup or tests.
 - Use separate scoped credentials for gateway, worker reads, executor, and migrations in production.
+- Retrieval is read-only. Never expose indexing or any write as an MCP tool, and never set
+  Evidence.trusted from document content.
+- A valid RCA must cite at least one observational tool. Runbooks and prior incidents are
+  procedure and precedent, not observations.

@@ -67,6 +67,7 @@ src/incident_platform/
   worker/            Kafka intake, durable jobs, graph resume/recovery
   workflow/          typed graph and deterministic authorization/policy
   integrations/      read tools, LLM analyst, notification/executor interfaces, evaluation hooks
+  knowledge/         chunking, indexing, hybrid retrieval, read-only MCP server
   models.py          Pydantic contracts and typed IncidentState
   storage.py         PostgreSQL outbox/inbox, dedup, approvals, audit, per-incident lock
   schema.sql         additive application schema
@@ -184,6 +185,13 @@ Mock mode uses deterministic analyst responses and labeled evidence. The real an
 `init_chat_model` and `with_structured_output`; read tools use LangChain `StructuredTool`.
 The investigator selects one read-only tool per round. Runbooks and similar incidents are optional
 RAG tools, never mandatory up-front retrieval. The default mock path uses topology, metrics and deployments.
+When `KNOWLEDGE_ENABLED=true`, those two tool names are served by a separate read-only MCP
+server (`runbooks` in Compose) that performs hybrid search over `docs/runbooks/` and resolved
+incidents, stored in PostgreSQL with pgvector. Lexical search needs no credentials; dense
+search activates only when `EMBEDDING_MODEL` and `EMBEDDING_DIM` are set. Retrieved text is
+untrusted reference material: it is delimited and labeled, never treated as instructions, and
+its `trusted` flag is set by the adapter rather than inferred from content. An empty result is
+returned as untrusted so it cannot satisfy the RCA corroboration rules.
 
 To integrate live systems:
 
@@ -225,6 +233,14 @@ See `docs/verification.md` for what was actually run while creating this reposit
 ## Deliberate boundaries
 
 - Read adapters, notification delivery and real mutation are stubs; local evidence/actions are simulated.
+- Retrieval evidence is procedure and precedent, not observation. A valid RCA must cite at
+  least one observational tool (logs, metrics, kubernetes, deployments, config_diffs,
+  topology); runbooks and similar incidents alone cannot establish a root cause.
+- Lexical ranking uses PostgreSQL `ts_rank_cd`, which weights term frequency and proximity
+  but applies no IDF and no query-coverage weighting. A chunk repeating one query term can
+  outrank a chunk covering more distinct terms. Measured on the seed corpus, the correct
+  document still ranks first, and enabling dense retrieval fuses a second opinion over the
+  same candidates. Replace the ranker before relying on lexical-only ordering at scale.
 - One workflow lifecycle per incident ID. Subsequent source events are durably journaled as followups,
   without overwriting a paused plan or automatically reopening a resolved incident. Implement explicit
   update/reopen policy before using continuous incident updates.

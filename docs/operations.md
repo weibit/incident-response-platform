@@ -90,3 +90,29 @@ optional; core correctness must not depend on trace delivery. Add infrastructure
 HTTP/Kafka/SQL when deploying; the starter emits structured correlated logs and LLM/graph callbacks.
 Retention/pruning and database backups are operator responsibilities; migrations currently create tables
 additively, not a full versioned migration framework.
+
+## Runbook knowledge retrieval
+
+The `runbooks` service exposes exactly two read-only MCP tools, `search_runbooks` and
+`search_similar_incidents`. Indexing is not an MCP tool; it runs only through
+`python -m incident_platform.knowledge.index`, which the `init` job invokes. This matters
+because LangGraph replays nodes after failures and interrupts - a write reachable from a
+tool call would be replayed with it.
+
+The service publishes no host port and authenticates every request with a bearer token.
+In production, give it a database role with SELECT on `knowledge_document` and
+`knowledge_chunk` only; the indexer runs separately and needs write access. The pgvector
+extension must be installed by a DBA before first start - the local Compose image ships it,
+but a managed PostgreSQL instance generally will not have it enabled by default.
+
+Retrieved documents are untrusted input. They are delimited and labeled in the evidence
+observation, and snippet bodies are never logged. Retrieval is capped at five snippets,
+1200 characters each, 6000 characters total.
+
+Changing `EMBEDDING_DIM` after indexing requires clearing the embedding column and
+re-running the indexer. It is an operator action, not an automatic migration.
+
+`worker` waits for `runbooks` to become healthy, and `runbooks` refuses to start without
+`KNOWLEDGE_MCP_TOKEN`. An `.env` predating this feature therefore fails the whole stack,
+not just retrieval. Copy the `KNOWLEDGE_*` block from `.env.example` into an existing
+`.env` before the first `docker compose up` after upgrading.
