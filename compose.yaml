@@ -8,7 +8,7 @@ x-app: &app
   restart: unless-stopped
 services:
   postgres:
-    image: postgres:17
+    image: pgvector/pgvector:pg17
     environment:
       POSTGRES_USER: incident
       POSTGRES_PASSWORD: incident
