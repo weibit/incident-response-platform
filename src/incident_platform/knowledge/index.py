@@ -84,6 +84,49 @@ def load_corpus(directory: Path = CORPUS) -> list[Document]:
     return documents
 
 
+async def ensure_vector_column(pool, dim: int) -> None:
+    """One-time, idempotent narrowing so the column can carry an ANN index."""
+    async with pool.connection() as conn:
+        row = await (
+            await conn.execute(
+                "SELECT atttypmod AS mod FROM pg_attribute "
+                "WHERE attrelid='knowledge_chunk'::regclass AND attname='embedding'"
+            )
+        ).fetchone()
+        if row and row["mod"] == -1:
+            await conn.execute(
+                f"ALTER TABLE knowledge_chunk ALTER COLUMN embedding TYPE vector({dim})"
+            )
+        await conn.execute(
+            "CREATE INDEX IF NOT EXISTS knowledge_chunk_hnsw "
+            "ON knowledge_chunk USING hnsw (embedding vector_cosine_ops)"
+        )
+
+
+async def embed_corpus(pool, embedder) -> int:
+    """Fill missing embeddings. Safe to re-run; only NULL rows are computed."""
+    if embedder is None:
+        return 0
+    await ensure_vector_column(pool, embedder.dim)
+    async with pool.connection() as conn:
+        rows = await (
+            await conn.execute("SELECT chunk_id, body FROM knowledge_chunk WHERE embedding IS NULL")
+        ).fetchall()
+    if not rows:
+        return 0
+    vectors = await embedder.embed([row["body"] for row in rows])
+    if vectors is None:
+        return 0
+    async with pool.connection() as conn:
+        async with conn.transaction():
+            for row, vector in zip(rows, vectors, strict=True):
+                await conn.execute(
+                    "UPDATE knowledge_chunk SET embedding=%s WHERE chunk_id=%s",
+                    (str(vector), row["chunk_id"]),
+                )
+    return len(rows)
+
+
 async def main() -> None:
     cfg = settings()
     pool = AsyncConnectionPool(
@@ -96,10 +139,16 @@ async def main() -> None:
     )
     await pool.open(wait=True)
     try:
+        from incident_platform.knowledge.embeddings import provider
+
         corpus = load_corpus()
         count = await ingest_documents(pool, corpus, kind="runbook")
         pruned = await prune_missing(pool, corpus, kind="runbook")
-        print(f"indexed {count} runbook chunks, pruned {pruned} documents", file=sys.stderr)
+        embedded = await embed_corpus(pool, provider(cfg))
+        print(
+            f"indexed {count} runbook chunks, pruned {pruned} documents, embedded {embedded}",
+            file=sys.stderr,
+        )
     finally:
         await pool.close()
 

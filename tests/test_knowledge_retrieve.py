@@ -6,8 +6,8 @@ from psycopg.rows import dict_row
 from psycopg_pool import AsyncConnectionPool
 
 from incident_platform.knowledge.chunker import chunk_markdown
-from incident_platform.knowledge.index import ingest_documents, prune_missing
-from incident_platform.knowledge.retrieve import MAX_SNIPPETS, search
+from incident_platform.knowledge.index import embed_corpus, ingest_documents, prune_missing
+from incident_platform.knowledge.retrieve import MAX_SNIPPETS, dense_ids, search
 from incident_platform.storage import Store
 
 pytestmark = pytest.mark.integration
@@ -194,3 +194,26 @@ async def test_a_query_with_no_usable_terms_returns_empty(pool):
     await ingest_documents(pool, _corpus(), kind="runbook")
     for query in ("", "   ", "!!!", "the a of"):
         assert await search(pool, kind="runbook", service="checkout", query=query) == []
+
+
+async def test_dense_leg_is_skipped_without_a_provider(pool):
+    await ingest_documents(pool, _corpus(), kind="runbook")
+    assert await dense_ids(pool, None, kind="runbook", service="checkout", query="rollback") == []
+
+
+async def test_dense_leg_returns_ids_with_a_stub_provider(pool):
+    await ingest_documents(pool, _corpus(), kind="runbook")
+
+    class StubEmbedder:
+        dim = 3
+
+        async def embed(self, texts):
+            return [[0.1, 0.2, 0.3] for _ in texts]
+
+        async def embed_query(self, text):
+            return [0.1, 0.2, 0.3]
+
+    embedder = StubEmbedder()
+    await embed_corpus(pool, embedder)
+    ids = await dense_ids(pool, embedder, kind="runbook", service="checkout", query="rollback")
+    assert ids

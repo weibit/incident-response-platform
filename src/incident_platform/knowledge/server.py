@@ -9,6 +9,7 @@ from psycopg.rows import dict_row
 from psycopg_pool import AsyncConnectionPool
 
 from incident_platform.config import settings
+from incident_platform.knowledge.embeddings import provider
 from incident_platform.knowledge.retrieve import search
 
 cfg = settings()
@@ -20,6 +21,7 @@ pool = AsyncConnectionPool(
     kwargs={"row_factory": dict_row},
     timeout=3,
 )
+embedder = provider(cfg)
 
 
 @asynccontextmanager
@@ -37,14 +39,18 @@ mcp = MCPServer("incident-runbooks", lifespan=lifespan)
 @mcp.tool()
 async def search_runbooks(service: str, query: str, limit: int = 5) -> list[dict]:
     """Search operational runbooks scoped to a service. Read-only."""
-    found = await search(pool, kind="runbook", service=service, query=query, limit=limit)
+    found = await search(
+        pool, kind="runbook", service=service, query=query, limit=limit, embedder=embedder
+    )
     return [asdict(snippet) for snippet in found]
 
 
 @mcp.tool()
 async def search_similar_incidents(service: str, query: str, limit: int = 5) -> list[dict]:
     """Search resolved prior incidents scoped to a service. Read-only."""
-    found = await search(pool, kind="incident", service=service, query=query, limit=limit)
+    found = await search(
+        pool, kind="incident", service=service, query=query, limit=limit, embedder=embedder
+    )
     return [asdict(snippet) for snippet in found]
 
 
