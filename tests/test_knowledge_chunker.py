@@ -61,3 +61,43 @@ def test_empty_body_is_rejected():
     body = "---\nid: x\ntitle: T\n---\n\n\n"
     with pytest.raises(CorpusError, match="empty"):
         chunk_markdown(body, source="a.md")
+
+
+# Built rather than written literally so this test file can itself live inside a
+# fenced block in the plan document.
+BACKTICKS = "`" * 3
+
+
+def fenced(marker: str) -> str:
+    return (
+        "---\nid: fenced\ntitle: Fenced\n---\n\n"
+        "## Steps\n\nRun this:\n\n"
+        f"{marker}bash\n# restart the service\nsystemctl restart checkout\n{marker}\n\n"
+        "Then confirm it came back.\n"
+    )
+
+
+@pytest.mark.parametrize("marker", [BACKTICKS, "~~~"])
+def test_a_comment_inside_a_code_fence_is_not_a_heading(marker):
+    # Runbooks are mostly shell snippets. Splitting on a shell comment would tear a
+    # command away from the context that explains it.
+    doc = chunk_markdown(fenced(marker), source="a.md")
+    assert [c.heading for c in doc.chunks] == ["Steps"]
+    assert "systemctl restart checkout" in doc.chunks[0].body
+    assert "Then confirm it came back." in doc.chunks[0].body
+
+
+def test_inserting_a_section_does_not_churn_the_ids_below_it():
+    before = "---\nid: x\ntitle: T\n---\n\n## A\n\nAlpha.\n\n## B\n\nBravo.\n"
+    after = "---\nid: x\ntitle: T\n---\n\n## New\n\nNovel.\n\n## A\n\nAlpha.\n\n## B\n\nBravo.\n"
+    original = {c.heading: c.chunk_id for c in chunk_markdown(before, source="a.md").chunks}
+    edited = {c.heading: c.chunk_id for c in chunk_markdown(after, source="a.md").chunks}
+    assert original["A"] == edited["A"]
+    assert original["B"] == edited["B"]
+
+
+def test_identical_sections_collapse_to_one_chunk():
+    text = "---\nid: x\ntitle: T\n---\n\n## A\n\nSame.\n\n## A\n\nSame.\n"
+    doc = chunk_markdown(text, source="a.md")
+    assert len(doc.chunks) == 1
+    assert [c.ordinal for c in doc.chunks] == [0]
