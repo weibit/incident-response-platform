@@ -7,6 +7,7 @@ from psycopg_pool import AsyncConnectionPool
 
 from incident_platform.knowledge.chunker import chunk_markdown
 from incident_platform.knowledge.index import ingest_documents, prune_missing
+from incident_platform.knowledge.retrieve import MAX_SNIPPETS, search
 from incident_platform.storage import Store
 
 pytestmark = pytest.mark.integration
@@ -139,3 +140,36 @@ async def test_prune_leaves_other_kinds_alone(pool):
     assert row["n"] == 1
     async with pool.connection() as conn:
         await conn.execute("DELETE FROM knowledge_document WHERE doc_id='zz-incident'")
+
+
+async def test_finds_a_runbook_by_topic(pool):
+    await ingest_documents(pool, _corpus(), kind="runbook")
+    snippets = await search(pool, kind="runbook", service="checkout", query="rollback release")
+    assert snippets
+    assert any(s.doc_id == "checkout-rollback" for s in snippets)
+    assert all(s.body for s in snippets)
+
+
+async def test_scopes_to_the_service_but_keeps_global_documents(pool):
+    await ingest_documents(pool, _corpus(), kind="runbook")
+    snippets = await search(pool, kind="runbook", service="payments", query="escalate approval")
+    doc_ids = {s.doc_id for s in snippets}
+    assert "oncall-escalation" in doc_ids  # global: no service in frontmatter
+    assert "checkout-rollback" not in doc_ids  # scoped to checkout
+
+
+async def test_returns_empty_for_a_nonmatching_query(pool):
+    await ingest_documents(pool, _corpus(), kind="runbook")
+    assert await search(pool, kind="runbook", service="checkout", query="zqxjkv") == []
+
+
+async def test_respects_the_snippet_cap(pool):
+    await ingest_documents(pool, _corpus(), kind="runbook")
+    snippets = await search(
+        pool,
+        kind="runbook",
+        service="checkout",
+        query="release rollback timeout approval",
+        limit=99,
+    )
+    assert len(snippets) <= MAX_SNIPPETS
