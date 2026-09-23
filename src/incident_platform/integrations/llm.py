@@ -36,30 +36,22 @@ def _model(cfg, alias: str):
     )
 
 
-def _trace_metadata(state):
-    """Build this invocation's `extra_body` payload, or None when state lacks the ids.
-
-    Both values are set on first invocation and persisted in checkpoints, so they
-    survive resumes. Absence skips binding rather than raising: a gateway-side trace
-    is never a reason a model call fails.
-    """
-    incident_id, event_id = state.get("incident_id"), state.get("input_event_id")
-    if not incident_id or not event_id:
-        return None
-    return {"metadata": {"existing_trace_id": trace_id_for(incident_id, event_id)}}
-
-
 def _structured_model(model, schema, state):
     """Attach structured output and this invocation's trace id in one step.
 
     extra_body must pass through with_structured_output. Binding it first and calling
     with_structured_output on the binding silently drops it: RunnableBinding delegates
     the attribute to the inner unbound model, discarding its kwargs.
+
+    Both ids are set on first invocation and persisted in checkpoints, so they survive
+    resumes. Their absence skips the trace rather than raising: a gateway-side trace is
+    never a reason a model call fails.
     """
-    extra_body = _trace_metadata(state)
-    if not extra_body:
+    incident_id, event_id = state.get("incident_id"), state.get("input_event_id")
+    if not incident_id or not event_id:
         return model.with_structured_output(schema)
-    return model.with_structured_output(schema, extra_body=extra_body)
+    trace = {"metadata": {"existing_trace_id": trace_id_for(incident_id, event_id)}}
+    return model.with_structured_output(schema, extra_body=trace)
 
 
 class Analyst:

@@ -75,13 +75,11 @@ TRACED_STATE = {
 
 class RecordingModel:
     def __init__(self, result):
-        self.result, self.bound = result, None
-
-    def bind(self, **kwargs):
-        self.bound = kwargs
-        return self
+        self.result = result
 
     def with_structured_output(self, schema, **_):
+        # Swallows kwargs, so it can never verify extra_body forwarding. The trace tests
+        # compose a real model for that; this double only covers the return path.
         return RunnableLambda(lambda _: self.result)
 
 
