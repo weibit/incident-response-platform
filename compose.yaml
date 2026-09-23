@@ -116,6 +116,11 @@ services:
       # The gateway authenticates itself to the runbooks server; it does not relay a
       # per-caller credential, because it connects before any caller exists.
       KNOWLEDGE_MCP_TOKEN: ${KNOWLEDGE_MCP_TOKEN:-dev-knowledge}
+      # Inert while the observability profile is down: the proxy simply cannot reach
+      # the collector and logs the failure. It must not stop serving.
+      LANGFUSE_PUBLIC_KEY: ${LANGFUSE_PUBLIC_KEY:-pk-lf-dev-public}
+      LANGFUSE_SECRET_KEY: ${LANGFUSE_SECRET_KEY:-sk-lf-dev-secret}
+      LANGFUSE_HOST: http://langfuse-web:3000
     depends_on:
       litellm-postgres: {condition: service_healthy}
       redis: {condition: service_healthy}
@@ -133,7 +138,144 @@ services:
     depends_on:
       init: {condition: service_completed_successfully}
       litellm: {condition: service_healthy}
+  langfuse-postgres:
+    image: postgres:17
+    profiles: ["observability"]
+    environment:
+      POSTGRES_USER: langfuse
+      POSTGRES_PASSWORD: langfuse
+      POSTGRES_DB: langfuse
+      TZ: UTC
+      PGTZ: UTC
+    volumes: ["langfusedata:/var/lib/postgresql/data"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U langfuse -d langfuse"]
+      interval: 3s
+      timeout: 3s
+      retries: 30
+  langfuse-redis:
+    image: redis:7
+    profiles: ["observability"]
+    # noeviction matters: Langfuse uses this as a work queue, and evicting queued
+    # ingestion jobs under memory pressure silently drops traces.
+    command: >
+      --requirepass langfuse
+      --maxmemory-policy noeviction
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 3s
+      timeout: 10s
+      retries: 10
+  clickhouse:
+    image: clickhouse/clickhouse-server:24.8
+    profiles: ["observability"]
+    user: "101:101"
+    environment:
+      CLICKHOUSE_DB: default
+      CLICKHOUSE_USER: clickhouse
+      CLICKHOUSE_PASSWORD: clickhouse
+    volumes:
+      - clickhousedata:/var/lib/clickhouse
+      - clickhouselogs:/var/log/clickhouse-server
+    healthcheck:
+      test: wget --no-verbose --tries=1 --spider http://localhost:8123/ping || exit 1
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 1s
+  langfuse-minio:
+    image: cgr.dev/chainguard/minio
+    profiles: ["observability"]
+    entrypoint: sh
+    # The bucket must exist before Langfuse starts, or every event upload fails.
+    command: -c 'mkdir -p /data/langfuse && minio server --address ":9000" --console-address ":9001" /data'
+    environment:
+      MINIO_ROOT_USER: minio
+      MINIO_ROOT_PASSWORD: miniosecret
+    volumes: ["langfuseblobs:/data"]
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 3s
+      timeout: 5s
+      retries: 20
+  langfuse-worker:
+    image: langfuse/langfuse-worker:3
+    profiles: ["observability"]
+    restart: unless-stopped
+    depends_on: &langfuse-deps
+      langfuse-postgres: {condition: service_healthy}
+      langfuse-redis: {condition: service_healthy}
+      langfuse-minio: {condition: service_healthy}
+      clickhouse: {condition: service_healthy}
+    environment: &langfuse-env
+      DATABASE_URL: postgresql://langfuse:langfuse@langfuse-postgres:5432/langfuse
+      NEXTAUTH_URL: http://localhost:3100
+      SALT: dev-langfuse-salt
+      # Quoted: 64 unquoted zeros parse as the integer 0, and Langfuse rejects it as
+      # "must be 256 bits, 64 string characters". Upstream only escapes this by
+      # wrapping the default in ${...}, which forces a string.
+      ENCRYPTION_KEY: "0000000000000000000000000000000000000000000000000000000000000000"
+      # A local starter should not phone home.
+      TELEMETRY_ENABLED: "false"
+      CLICKHOUSE_MIGRATION_URL: clickhouse://clickhouse:9000
+      CLICKHOUSE_URL: http://clickhouse:8123
+      CLICKHOUSE_USER: clickhouse
+      CLICKHOUSE_PASSWORD: clickhouse
+      CLICKHOUSE_CLUSTER_ENABLED: "false"
+      REDIS_HOST: langfuse-redis
+      REDIS_PORT: "6379"
+      REDIS_AUTH: langfuse
+      LANGFUSE_S3_EVENT_UPLOAD_BUCKET: langfuse
+      LANGFUSE_S3_EVENT_UPLOAD_REGION: auto
+      LANGFUSE_S3_EVENT_UPLOAD_ACCESS_KEY_ID: minio
+      LANGFUSE_S3_EVENT_UPLOAD_SECRET_ACCESS_KEY: miniosecret
+      LANGFUSE_S3_EVENT_UPLOAD_ENDPOINT: http://langfuse-minio:9000
+      LANGFUSE_S3_EVENT_UPLOAD_FORCE_PATH_STYLE: "true"
+      LANGFUSE_S3_EVENT_UPLOAD_PREFIX: events/
+      LANGFUSE_S3_MEDIA_UPLOAD_BUCKET: langfuse
+      LANGFUSE_S3_MEDIA_UPLOAD_REGION: auto
+      LANGFUSE_S3_MEDIA_UPLOAD_ACCESS_KEY_ID: minio
+      LANGFUSE_S3_MEDIA_UPLOAD_SECRET_ACCESS_KEY: miniosecret
+      LANGFUSE_S3_MEDIA_UPLOAD_ENDPOINT: http://langfuse-minio:9000
+      LANGFUSE_S3_MEDIA_UPLOAD_FORCE_PATH_STYLE: "true"
+      LANGFUSE_S3_MEDIA_UPLOAD_PREFIX: media/
+  langfuse-web:
+    image: langfuse/langfuse:3
+    profiles: ["observability"]
+    restart: unless-stopped
+    # The only published port in the profile. Everything else stays on the compose
+    # network, because upstream publishes 5432 and this repo's own postgres holds it.
+    # 3100 rather than upstream's 3000: 3000 is a common default that other local
+    # services take, and NEXTAUTH_URL below must match whatever is published here.
+    ports: ["127.0.0.1:3100:3000"]
+    depends_on: *langfuse-deps
+    environment:
+      <<: *langfuse-env
+      NEXTAUTH_SECRET: dev-langfuse-nextauth
+      # Headless provisioning: the stack comes up already usable, with the same keys
+      # the worker and gateway are configured with. No UI click-through to start up.
+      LANGFUSE_INIT_ORG_ID: incident-response
+      LANGFUSE_INIT_ORG_NAME: Incident Response
+      LANGFUSE_INIT_PROJECT_ID: incident-platform
+      LANGFUSE_INIT_PROJECT_NAME: Incident Platform
+      LANGFUSE_INIT_PROJECT_PUBLIC_KEY: ${LANGFUSE_PUBLIC_KEY:-pk-lf-dev-public}
+      LANGFUSE_INIT_PROJECT_SECRET_KEY: ${LANGFUSE_SECRET_KEY:-sk-lf-dev-secret}
+      LANGFUSE_INIT_USER_EMAIL: dev@example.com
+      LANGFUSE_INIT_USER_NAME: Developer
+      LANGFUSE_INIT_USER_PASSWORD: dev-langfuse-password
+    healthcheck:
+      # Its own service name, not localhost: this image binds only the container's eth0
+      # address, so loopback is refused from inside. Upstream ships no healthcheck here,
+      # which is why the quirk is easy to walk into.
+      test: ["CMD-SHELL", "wget -qO- http://langfuse-web:3000/api/public/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
 volumes:
   pgdata:
   kafkadata:
   litellmdata:
+  langfusedata:
+  clickhousedata:
+  clickhouselogs:
+  langfuseblobs:

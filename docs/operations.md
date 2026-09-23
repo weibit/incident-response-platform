@@ -88,6 +88,11 @@ Observe inbox backlog/age, DLQ count, policy denials, approval age/expiry, check
 verification outcomes, tool latency, model token/cost, and end-to-end incident duration. Langfuse is
 optional; core correctness must not depend on trace delivery. Add infrastructure OTel export for
 HTTP/Kafka/SQL when deploying; the starter emits structured correlated logs and LLM/graph callbacks.
+Langfuse is self-hosted in the `observability` Compose profile. ClickHouse grows with trace
+volume; retention and pruning there are an operator responsibility, as for the incident database.
+Traces contain evidence verbatim, so the collector belongs inside the same trust boundary as the
+worker.
+
 Retention/pruning and database backups are operator responsibilities; migrations currently create tables
 additively, not a full versioned migration framework.
 

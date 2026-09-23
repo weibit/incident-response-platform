@@ -8,6 +8,7 @@ from langgraph.types import Command
 from incident_platform.integrations.llm import Analyst
 from incident_platform.integrations.tools import MockEvidenceBackend
 from incident_platform.models import RCA, Action, Envelope, Plan, Triage
+from incident_platform.worker import main as worker_main
 from incident_platform.worker.main import process_event
 from incident_platform.workflow.graph import build_graph
 from incident_platform.workflow.policy import authorized_execution, policy, valid_rca
@@ -222,3 +223,24 @@ async def test_read_tool_transient_failure_retries(cfg, store, incident):
     assert state["__interrupt__"]
     assert backend.failures == 1
     assert not store.executions
+
+
+async def test_trace_config_uses_the_delivered_event_id(cfg, store, incident, monkeypatch):
+    seen = {}
+    original = worker_main.graph_config
+
+    def spy(incident_id, correlation_id, event_id, enabled):
+        seen["event_id"] = event_id
+        return original(incident_id, correlation_id, event_id, enabled)
+
+    monkeypatch.setattr(worker_main, "graph_config", spy)
+    graph = build_graph(cfg, store, Analyst(cfg), MockEvidenceBackend(), InMemorySaver())
+    event = Envelope(
+        incident_id=incident["incident_id"],
+        correlation_id=incident["correlation_id"],
+        event_type="incident.created",
+        source="jira",
+        payload=incident["raw"],
+    )
+    await process_event(store, graph, cfg, event)
+    assert seen["event_id"] == str(event.event_id)
