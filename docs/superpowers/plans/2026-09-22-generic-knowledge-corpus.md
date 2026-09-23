@@ -44,7 +44,7 @@ Nothing ships from this task but a recorded table. It exists because two earlier
 - Modify: `pyproject.toml`
 - Modify: this plan file (Step 4)
 
-- [ ] **Step 1: Add the dependencies**
+- [x] **Step 1: Add the dependencies**
 
 In `pyproject.toml`, extend the dependencies list:
 
@@ -61,7 +61,7 @@ uv sync
 
 Expected: resolution succeeds. If it fails on a `langchain-core` conflict, stop and report the conflicting pins rather than forcing a resolution.
 
-- [ ] **Step 2: Confirm the class names against the installed packages**
+- [x] **Step 2: Confirm the class names against the installed packages**
 
 ```bash
 uv run python -c "
@@ -80,7 +80,7 @@ print('TextLoader.load:', inspect.signature(TextLoader.load))
 
 Record: the resolved versions, whether `RecursiveCharacterTextSplitter.split_text` returns `list[str]`, and what a loader's `load()` returns.
 
-- [ ] **Step 3: Confirm what a loaded document carries**
+- [x] **Step 3: Confirm what a loaded document carries**
 
 ```bash
 uv run python -c "
@@ -98,11 +98,27 @@ print('metadata keys:', list(docs[0].metadata))
 
 Expected: one document with `page_content` and `metadata`. **If `page_content` is not the attribute name, stop and report** — every mapping in Task 4 depends on it.
 
-- [ ] **Step 4: Record the facts in this file**
+- [x] **Step 4: Record the facts in this file**
 
 Append a table to this task listing resolved versions, the splitter class and method, the loader classes, and the document attribute names. Later tasks read that table rather than re-deriving it.
 
-- [ ] **Step 5: Commit**
+**Verified facts** (measured against the installed packages on 2026-09-22; `uv sync` resolved 124 packages total, 6 net-new: `greenlet`, `httpx-sse`, `langchain-classic`, `langchain-community`, `pypdf`, `sqlalchemy` — `langchain-text-splitters` was already present as a transitive dependency of `langchain`; `langchain-core` stayed pinned at `1.6.4`, no existing package version changed):
+
+| Fact | Value |
+|---|---|
+| `langchain-community` version | `0.4.2` (emits a `DeprecationWarning` on import: "being sunset ... migration guidance toward standalone integration packages" — noted for later tasks, not acted on here) |
+| `langchain-text-splitters` version | `1.1.2` |
+| `pypdf` version | `6.19.0` |
+| Splitter class | `langchain_text_splitters.RecursiveCharacterTextSplitter` |
+| Splitter method used | `.split_text(text: str)` → confirmed by direct call to return `list[str]` (not just by signature) |
+| Text loader class | `langchain_community.document_loaders.TextLoader`, from `langchain_community.document_loaders.text` |
+| PDF loader class | `langchain_community.document_loaders.PyPDFLoader`, from `langchain_community.document_loaders.pdf` |
+| Loader `.load()` return type | `list[Document]` where `Document` is `langchain_core.documents.base.Document` (confirmed for both `TextLoader` and `PyPDFLoader` by instantiating each and loading a real file) |
+| Document attribute names | `page_content` (str) and `metadata` (dict) — both confirmed present via `hasattr` and by reading real values |
+| `TextLoader` document count for a 2-paragraph file | 1 document; `page_content` holds the full file text verbatim; `metadata` = `{'source': '<abs path>'}` |
+| `PyPDFLoader` document count for a 1-page blank PDF | 1 document (one `Document` per page); `metadata` keys observed: `producer`, `creator`, `creationdate`, `source`, `total_pages`, `page`, `page_label` |
+
+- [x] **Step 5: Commit**
 
 ```bash
 git add pyproject.toml uv.lock docs/superpowers/plans/2026-09-22-generic-knowledge-corpus.md
