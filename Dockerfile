@@ -5,6 +5,7 @@ WORKDIR /app
 COPY pyproject.toml uv.lock ./
 COPY src ./src
 COPY docs/runbooks ./docs/runbooks
+COPY corpus.yaml ./corpus.yaml
 RUN uv sync --frozen --no-dev && useradd --uid 10001 --create-home app
 USER app
 ENV PATH="/app/.venv/bin:$PATH" PYTHONUNBUFFERED=1
