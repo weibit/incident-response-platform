@@ -39,7 +39,7 @@ uncalled since it was written; this spec is its first caller.
 | Placement | A separate `judge` service consuming terminal domain events. Never on the incident path. |
 | Trigger | `incident.resolved` and `incident.manual_review`, its own consumer group. |
 | Evidence source | `store.get_state` from PostgreSQL. The judge never reads a trace. |
-| Score target | The incident's Langfuse **session** (`session_id = incident_id`). |
+| Score target | The incident's **first trace**, derived from `state["input_event_id"]`. Session-only scores are silently dropped. |
 | Idempotency | Deterministic `score_id` from `(incident_id, score_name)`. Duplicates overwrite. |
 | Rubric | Four deterministic scores plus one judged score, `rca_faithfulness`. |
 | Elicitation | A three-value enum from the model, mapped to a NUMERIC score. |
@@ -57,7 +57,7 @@ Per completed incident:
    `rca`, `rca_valid` and the full `evidence` list.
 3. The four deterministic scores are computed. No model is involved.
 4. One judge call assesses RCA faithfulness.
-5. All five scores are written to Langfuse against the incident's session.
+5. All five scores are written to Langfuse against the incident's first trace.
 6. One `judge.verdict` audit row is written through the existing `store.audit`.
 7. The Kafka offset is committed, last.
 
@@ -69,16 +69,27 @@ money without corrupting anything. That is accepted rather than solved; solving 
 giving the judge its own durable inbox, which is a contained upgrade behind the same consumer
 boundary if double-billing ever proves real.
 
-### Why not a trace
+### Which trace, and why not the session
 
-An incident has one trace per delivered event, and the terminal trace's id cannot be
-recovered. Traces are keyed by *delivered input* event ids, while `incident.resolved` is an
-*emitted domain* event carrying its own fresh uuid, so deriving from it would name a trace
-that does not exist. `state["input_event_id"]` holds only the first delivered event — it is
-not overwritten on approval resume — so deriving from state reaches the incident's first
-trace, not the one that concluded it.
+**Corrected 2026-09-23 after testing against the running stack.** An earlier draft of this
+spec attached scores to the incident's Langfuse *session*, reasoning that the judgement is
+incident-level. That does not work: a score carrying only `session_id` and no `trace_id` is
+**accepted by the SDK without error and silently dropped by the server**. Verified by writing
+one of each and reading them back — the trace-scoped score stored, the session-scoped one did
+not. Designing on the original assumption would have produced a judge that appeared to work
+and recorded nothing.
 
-The judgement is about the incident, and the incident is exactly what the session already is.
+Scores therefore attach to a trace. The available one is the incident's **first** trace,
+derived from `state["input_event_id"]`, which is set on first invocation and not overwritten on
+approval resume. The terminal trace's id is genuinely unrecoverable: traces are keyed by
+*delivered input* event ids, while `incident.resolved` is an *emitted domain* event with its
+own fresh uuid, so deriving from it would name a trace that does not exist.
+
+The first trace is not a consolation prize. It is the trace in which `triage`, `investigate`
+and `validate_rca` ran, so it is where the RCA under judgement was actually produced —
+arguably a better home for `rca_faithfulness` than the session would have been. The outcome
+scores are less precisely placed, since `verified` is established in a later trace, but keeping
+all five together on the incident's entry trace is worth more than splitting them across two.
 
 ## Scores
 
@@ -143,6 +154,19 @@ This mitigation is weaker than the analyst's, and the spec says so plainly. The 
 output is constrained afterwards by deterministic policy; the judge's output *is* the product,
 and nothing downstream re-checks it. What bounds the damage is the authority boundary below: a
 gamed judge misleads a human and cannot move an incident.
+
+## Untraced incidents cannot be scored
+
+A score written against a trace id that does not exist is **also silently dropped** — verified
+the same way. So an incident processed while `LANGFUSE_ENABLED` was false has no trace, and all
+five of its scores vanish without an error anywhere.
+
+Two consequences the implementation must respect. First, this is a second reason the
+`judge_enabled` validator requires tracing configured: the judge is not merely useless without
+it, its writes disappear. Second, the `judge.verdict` audit row is written through
+`store.audit`, which does not depend on Langfuse at all — so even an incident whose scores are
+dropped leaves a durable record that it was judged and what the verdict was. The audit log is
+the floor; Langfuse is the queryable surface above it.
 
 ## Authority boundary
 
@@ -222,12 +246,20 @@ score count stays at five rather than doubling.
 
 ## To verify at implementation time
 
-1. That Langfuse 3.15.0 accepts a score carrying only `session_id` and no `trace_id`. If it
-   requires a trace, the fallback is the incident's first trace, derived from
-   `state["input_event_id"]`. Recoverable, just less apt.
-2. That `create_score`'s `score_id` behaves as an upsert key rather than rejecting a repeat.
-   If it appends instead, idempotency must move to a read-then-write or to approach B's
-   durable inbox, and the spec must be corrected.
-3. Which `data_type` values the SDK accepts for CATEGORICAL scores carrying a string value.
-4. That the `judge` service in the `observability` profile does not disturb the default
-   `docker compose up` service list.
+Items 1 to 3 were settled by testing against the running stack on 2026-09-23, before this
+spec was planned. Their outcomes are folded into the design above.
+
+1. **Settled, and it changed the design.** A score with only `session_id` is accepted by the
+   SDK and silently dropped by the server. Scores must carry a `trace_id`. See "Which trace,
+   and why not the session".
+2. **Settled, design holds.** A repeated `score_id` upserts: writing the same id twice left one
+   row carrying the second value and comment. Approach A's idempotency works as designed.
+3. **Settled.** `BOOLEAN`, `NUMERIC` and `CATEGORICAL` all store on a trace. A CATEGORICAL
+   score's string lands in `stringValue` with `value` set to 0, so read it from `stringValue`.
+4. **Still open.** That the `judge` service in the `observability` profile does not disturb the
+   default `docker compose up` service list.
+
+One operational note discovered while testing, not a design item: the Langfuse ingestion worker
+does not recover its Redis connections after the host sleeps. It logged socket timeouts on every
+queue and ingested nothing until restarted. Anyone verifying scores should check
+`docker compose logs langfuse-worker` for socket timeouts before concluding that a write failed.
