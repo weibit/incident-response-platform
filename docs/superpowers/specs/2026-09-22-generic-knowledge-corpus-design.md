@@ -147,6 +147,14 @@ Unlike the previous two features, this is not additive. Every place the old name
 | `knowledge/server.py:49` | One MCP tool taking `kind`, not two tools |
 | `integrations/llm.py:83` | The investigate prompt's tool list |
 | `deploy/litellm/config.yaml:48` | `allowed_tools` lists one tool |
+| `models.py` | `InvestigationStep` gains a `kind` field, so the analyst can name one |
+| `workflow/graph.py:52` | The tool payload carries `kind` for the knowledge tool |
+| `integrations/tools.py:21` | `EvidenceBackend.query` takes an optional `kind` |
+
+The last three were missing from this table when the design was approved. `kind` has to
+reach the backend somehow, and the only honest routes are a field on `InvestigationStep` or
+dropping the parameter entirely. Dropping it would cost the analyst the ability to
+deliberately seek precedent rather than procedure, which is worth more than three edits.
 
 The mock investigator concludes on `topology`, `metrics` and `deployments`, so the graph
 tests should not move. If they do, that is a finding: it would mean the mock path depends on
