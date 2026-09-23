@@ -1,6 +1,8 @@
 import json
 
 import pytest
+from langfuse import get_client
+from langfuse._client.resource_manager import LangfuseResourceManager
 from pydantic import SecretStr
 
 from incident_platform.telemetry import build_mask, init_tracing, trace_id_for
@@ -105,3 +107,19 @@ def test_init_tracing_survives_a_failing_auth_check(cfg, monkeypatch):
     monkeypatch.setattr("incident_platform.telemetry.Langfuse", Unreachable)
     # Tracing is never a reason the worker fails to start.
     assert init_tracing(cfg.model_copy(update={"langfuse_enabled": True})) is not None
+
+
+def test_get_client_returns_a_masked_client_after_init(cfg, monkeypatch):
+    # The justification for init_tracing: evaluation.py calls the SDK's bare get_client(),
+    # and that call must redact. The SDK shares configuration through a resource manager
+    # rather than returning the same object, so identity is not the property worth pinning.
+    monkeypatch.setenv("LANGFUSE_PUBLIC_KEY", "pk-lf-test")
+    monkeypatch.setenv("LANGFUSE_SECRET_KEY", "sk-lf-test")
+    monkeypatch.setenv("LANGFUSE_BASE_URL", "http://127.0.0.1:1")
+    LangfuseResourceManager.reset()
+    try:
+        init_tracing(cfg.model_copy(update={"langfuse_enabled": True}))
+        secret = cfg.jira_webhook_token.get_secret_value()
+        assert get_client()._mask(data=f"leak {secret}") == "leak [redacted]"
+    finally:
+        LangfuseResourceManager.reset()

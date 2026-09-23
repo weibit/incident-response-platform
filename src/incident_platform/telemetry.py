@@ -83,8 +83,9 @@ def build_mask(cfg):
 
 
 def init_tracing(cfg):
-    """Construct the one Langfuse client, with masking configured.
+    """Construct a Langfuse client with masking configured.
 
+    The SDK shares the masked configuration with clients obtained later via get_client().
     Returns None when tracing is disabled. The SDK disables itself rather than raising
     when credentials are absent, so a mistyped key degrades export instead of refusing
     startup: core correctness must not depend on trace delivery.
