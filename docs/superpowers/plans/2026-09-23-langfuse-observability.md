@@ -764,6 +764,8 @@ In `compose.yaml`, add these services before the `volumes:` key. Every one carri
       POSTGRES_USER: langfuse
       POSTGRES_PASSWORD: langfuse
       POSTGRES_DB: langfuse
+      TZ: UTC
+      PGTZ: UTC
     volumes: ["langfusedata:/var/lib/postgresql/data"]
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U langfuse -d langfuse"]
@@ -771,51 +773,66 @@ In `compose.yaml`, add these services before the `volumes:` key. Every one carri
       timeout: 3s
       retries: 30
   langfuse-redis:
-    image: redis:7-alpine
+    image: redis:7
     profiles: ["observability"]
-    command: ["redis-server", "--requirepass", "langfuse"]
+    # noeviction matters: Langfuse uses this as a work queue, and evicting queued
+    # ingestion jobs under memory pressure silently drops traces.
+    command: >
+      --requirepass langfuse
+      --maxmemory-policy noeviction
     healthcheck:
-      test: ["CMD", "redis-cli", "-a", "langfuse", "ping"]
+      test: ["CMD", "redis-cli", "ping"]
       interval: 3s
-      timeout: 3s
-      retries: 30
+      timeout: 10s
+      retries: 10
   clickhouse:
     image: clickhouse/clickhouse-server:24.8
     profiles: ["observability"]
+    user: "101:101"
     environment:
+      CLICKHOUSE_DB: default
       CLICKHOUSE_USER: clickhouse
       CLICKHOUSE_PASSWORD: clickhouse
-      CLICKHOUSE_DB: default
-    volumes: ["clickhousedata:/var/lib/clickhouse"]
-    ulimits:
-      nofile: {soft: 262144, hard: 262144}
+    volumes:
+      - clickhousedata:/var/lib/clickhouse
+      - clickhouselogs:/var/log/clickhouse-server
     healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://localhost:8123/ping || exit 1"]
+      test: wget --no-verbose --tries=1 --spider http://localhost:8123/ping || exit 1
       interval: 5s
       timeout: 5s
-      retries: 30
+      retries: 20
+      start_period: 1s
   langfuse-minio:
-    image: minio/minio
+    image: cgr.dev/chainguard/minio
     profiles: ["observability"]
-    command: ["server", "/data", "--console-address", ":9001"]
+    entrypoint: sh
+    # The bucket must exist before Langfuse starts, or every event upload fails.
+    command: -c 'mkdir -p /data/langfuse && minio server --address ":9000" --console-address ":9001" /data'
     environment:
       MINIO_ROOT_USER: minio
       MINIO_ROOT_PASSWORD: miniosecret
     volumes: ["langfuseblobs:/data"]
     healthcheck:
-      test: ["CMD-SHELL", "mc ready local || exit 1"]
-      interval: 5s
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 3s
       timeout: 5s
-      retries: 30
+      retries: 20
   langfuse-worker:
     image: langfuse/langfuse-worker:3
     profiles: ["observability"]
+    restart: unless-stopped
+    depends_on: &langfuse-deps
+      langfuse-postgres: {condition: service_healthy}
+      langfuse-redis: {condition: service_healthy}
+      langfuse-minio: {condition: service_healthy}
+      clickhouse: {condition: service_healthy}
     environment: &langfuse-env
       DATABASE_URL: postgresql://langfuse:langfuse@langfuse-postgres:5432/langfuse
+      NEXTAUTH_URL: http://localhost:3000
       SALT: dev-langfuse-salt
       ENCRYPTION_KEY: 0000000000000000000000000000000000000000000000000000000000000000
-      NEXTAUTH_SECRET: dev-langfuse-nextauth
-      NEXTAUTH_URL: http://localhost:3000
+      # A local starter should not phone home.
+      TELEMETRY_ENABLED: "false"
       CLICKHOUSE_MIGRATION_URL: clickhouse://clickhouse:9000
       CLICKHOUSE_URL: http://clickhouse:8123
       CLICKHOUSE_USER: clickhouse
@@ -826,21 +843,29 @@ In `compose.yaml`, add these services before the `volumes:` key. Every one carri
       REDIS_AUTH: langfuse
       LANGFUSE_S3_EVENT_UPLOAD_BUCKET: langfuse
       LANGFUSE_S3_EVENT_UPLOAD_REGION: auto
-      LANGFUSE_S3_EVENT_UPLOAD_ENDPOINT: http://langfuse-minio:9000
       LANGFUSE_S3_EVENT_UPLOAD_ACCESS_KEY_ID: minio
       LANGFUSE_S3_EVENT_UPLOAD_SECRET_ACCESS_KEY: miniosecret
+      LANGFUSE_S3_EVENT_UPLOAD_ENDPOINT: http://langfuse-minio:9000
       LANGFUSE_S3_EVENT_UPLOAD_FORCE_PATH_STYLE: "true"
-    depends_on:
-      langfuse-postgres: {condition: service_healthy}
-      clickhouse: {condition: service_healthy}
-      langfuse-minio: {condition: service_healthy}
-      langfuse-redis: {condition: service_healthy}
+      LANGFUSE_S3_EVENT_UPLOAD_PREFIX: events/
+      LANGFUSE_S3_MEDIA_UPLOAD_BUCKET: langfuse
+      LANGFUSE_S3_MEDIA_UPLOAD_REGION: auto
+      LANGFUSE_S3_MEDIA_UPLOAD_ACCESS_KEY_ID: minio
+      LANGFUSE_S3_MEDIA_UPLOAD_SECRET_ACCESS_KEY: miniosecret
+      LANGFUSE_S3_MEDIA_UPLOAD_ENDPOINT: http://langfuse-minio:9000
+      LANGFUSE_S3_MEDIA_UPLOAD_FORCE_PATH_STYLE: "true"
+      LANGFUSE_S3_MEDIA_UPLOAD_PREFIX: media/
   langfuse-web:
     image: langfuse/langfuse:3
     profiles: ["observability"]
+    restart: unless-stopped
+    # The only published port in the profile. Everything else stays on the compose
+    # network, because upstream publishes 5432 and this repo's own postgres holds it.
     ports: ["127.0.0.1:3000:3000"]
+    depends_on: *langfuse-deps
     environment:
       <<: *langfuse-env
+      NEXTAUTH_SECRET: dev-langfuse-nextauth
       # Headless provisioning: the stack comes up already usable, with the same keys
       # the worker and gateway are configured with. No UI click-through to start up.
       LANGFUSE_INIT_ORG_ID: incident-response
@@ -852,17 +877,32 @@ In `compose.yaml`, add these services before the `volumes:` key. Every one carri
       LANGFUSE_INIT_USER_EMAIL: dev@example.com
       LANGFUSE_INIT_USER_NAME: Developer
       LANGFUSE_INIT_USER_PASSWORD: dev-langfuse-password
-    depends_on:
-      langfuse-postgres: {condition: service_healthy}
-      clickhouse: {condition: service_healthy}
-      langfuse-minio: {condition: service_healthy}
-      langfuse-redis: {condition: service_healthy}
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://localhost:3000/api/public/health || exit 1"]
       interval: 10s
       timeout: 5s
       retries: 30
 ```
+
+> **This block was corrected on 2026-09-23 against the real upstream compose** for tag
+> `v3.225.10`, fetched during implementation. The original block in this plan was written from
+> memory and contained two defects that would have broken the stack:
+>
+> 1. **MinIO never created the `langfuse` bucket.** The original used
+>    `command: ["server", "/data", ...]`. Upstream overrides the entrypoint to `mkdir -p
+>    /data/langfuse` first. Without it every event upload fails and no trace is ever stored.
+> 2. **ClickHouse lacked `user: "101:101"` and the logs volume**, both of which upstream sets.
+>
+> Three further deliberate departures from upstream, each a decision rather than a copy:
+>
+> - **Server pinned to `:3`, not `:4`.** Upstream's current compose ships Langfuse v4, but this
+>   repo pins the v3 SDK (`langfuse>=3,<4`, 3.15.0 installed). Matching majors avoids running a
+>   v4 server against a v3 client. Upgrading the server means bumping the SDK pin together.
+> - **No published ports except `langfuse-web:3000`.** Upstream publishes 5432, 6379, 8123, 9000
+>   and 9090. This repo's own `postgres` already binds `127.0.0.1:5432`, so copying upstream
+>   would collide. Nothing outside the profile needs those ports.
+> - **`TELEMETRY_ENABLED: "false"`.** Upstream defaults it on; a local starter should not
+>   phone home.
 
 Extend the `volumes:` block at the end of the file to:
 
