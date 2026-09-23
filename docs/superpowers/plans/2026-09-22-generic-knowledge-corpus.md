@@ -1107,7 +1107,10 @@ source that says nothing at all.
 
 - [ ] **Step 3: Make it available inside the image**
 
-In `Dockerfile`, extend the corpus copy:
+`COPY corpus.yaml ./corpus.yaml` was pulled forward into Task 5, because deferring it to
+here left the container broken the moment indexing became manifest-driven: the init job dies
+with `FileNotFoundError: corpus.yaml` and every downstream service fails to start. Only the
+new corpus directory remains to add:
 
 ```dockerfile
 COPY docs/runbooks ./docs/runbooks
