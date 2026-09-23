@@ -828,9 +828,12 @@ In `compose.yaml`, add these services before the `volumes:` key. Every one carri
       clickhouse: {condition: service_healthy}
     environment: &langfuse-env
       DATABASE_URL: postgresql://langfuse:langfuse@langfuse-postgres:5432/langfuse
-      NEXTAUTH_URL: http://localhost:3000
+      NEXTAUTH_URL: http://localhost:3100
       SALT: dev-langfuse-salt
-      ENCRYPTION_KEY: 0000000000000000000000000000000000000000000000000000000000000000
+      # Quoted: 64 unquoted zeros parse as the integer 0, and Langfuse rejects it as
+      # "must be 256 bits, 64 string characters". Upstream only escapes this by
+      # wrapping the default in ${...}, which forces a string.
+      ENCRYPTION_KEY: "0000000000000000000000000000000000000000000000000000000000000000"
       # A local starter should not phone home.
       TELEMETRY_ENABLED: "false"
       CLICKHOUSE_MIGRATION_URL: clickhouse://clickhouse:9000
@@ -861,7 +864,9 @@ In `compose.yaml`, add these services before the `volumes:` key. Every one carri
     restart: unless-stopped
     # The only published port in the profile. Everything else stays on the compose
     # network, because upstream publishes 5432 and this repo's own postgres holds it.
-    ports: ["127.0.0.1:3000:3000"]
+    # 3100 rather than upstream's 3000: 3000 is a common default that other local
+    # services take, and NEXTAUTH_URL below must match whatever is published here.
+    ports: ["127.0.0.1:3100:3000"]
     depends_on: *langfuse-deps
     environment:
       <<: *langfuse-env
@@ -878,11 +883,32 @@ In `compose.yaml`, add these services before the `volumes:` key. Every one carri
       LANGFUSE_INIT_USER_NAME: Developer
       LANGFUSE_INIT_USER_PASSWORD: dev-langfuse-password
     healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://localhost:3000/api/public/health || exit 1"]
+      # Its own service name, not localhost: this image binds only the container's eth0
+      # address, so loopback is refused from inside. Upstream ships no healthcheck here,
+      # which is why the quirk is easy to walk into.
+      test: ["CMD-SHELL", "wget -qO- http://langfuse-web:3000/api/public/health || exit 1"]
       interval: 10s
       timeout: 5s
       retries: 30
 ```
+
+> **Three further defects were found by actually running it**, and are fixed above:
+>
+> 4. **`ENCRYPTION_KEY` was unquoted.** YAML parsed 64 zeros as the integer `0`, Compose
+>    resolved it to `"0"`, and langfuse-web crash-looped on
+>    `ENCRYPTION_KEY must be 256 bits, 64 string characters`. Upstream only avoids this by
+>    accident, because its default sits inside `${...}` interpolation which forces a string.
+> 5. **The healthcheck used `localhost`.** This image binds only the container's eth0 address,
+>    so both `localhost` and `127.0.0.1` are refused from inside the container while the host
+>    gets a 200. Verified against `/proc/net/tcp`. The check now uses the service name.
+>    Upstream ships no healthcheck on this service, which is why the quirk is easy to walk into.
+> 6. **The published port moved from 3000 to 3100.** Port 3000 was already held on this host by
+>    an unrelated container. `NEXTAUTH_URL` must match whatever is published, so both changed.
+>
+> Verified on 2026-09-23 against server `3.225.10`: langfuse-web reaches `healthy` in about 15
+> seconds, `curl -u pk-lf-dev-public:sk-lf-dev-secret .../api/public/projects` returns the
+> provisioned `incident-platform` project, the default `docker compose config --services` still
+> lists exactly its original ten services, and the profile adds six.
 
 > **This block was corrected on 2026-09-23 against the real upstream compose** for tag
 > `v3.225.10`, fetched during implementation. The original block in this plan was written from
