@@ -1,5 +1,7 @@
 import json
 
+from pydantic import SecretStr
+
 from incident_platform.telemetry import build_mask, trace_id_for
 
 
@@ -52,3 +54,10 @@ def test_mask_ignores_unset_secrets(cfg):
 def test_mask_output_is_json_serialisable(cfg):
     masked = build_mask(cfg)(data={"a": ("x", "y"), "b": [1, 2.5, None, True]})
     json.dumps(masked)
+
+
+def test_mask_covers_every_secret_field_on_settings(cfg):
+    # The guard that matters: a credential added to Settings later must be redacted
+    # without anyone remembering to update the mask.
+    extra = cfg.model_copy(update={"knowledge_mcp_token": SecretStr("added-later-secret")})
+    assert "added-later-secret" not in build_mask(extra)(data="x added-later-secret y")

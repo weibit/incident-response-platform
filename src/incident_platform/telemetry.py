@@ -10,6 +10,7 @@ import re
 
 import structlog
 from langfuse import Langfuse
+from pydantic import SecretStr
 
 
 def configure_logging():
@@ -44,21 +45,15 @@ def build_mask(cfg):
 
     Exact-value redaction only. Evidence, ticket and runbook bodies are traced verbatim;
     heuristics would false-positive on log and stack-trace text and cannot be pinned by a
-    test. Empty credentials are dropped because "" matches everywhere.
+    test. Secrets are derived from the Settings model's SecretStr fields rather than listed, so a
+    credential added later cannot silently reach the trace store. Empty ones are dropped
+    because "" matches everywhere.
     """
     secrets = sorted(
         (
-            value
-            for value in (
-                cfg.jira_webhook_token.get_secret_value(),
-                cfg.jira_approval_token.get_secret_value(),
-                cfg.status_token.get_secret_value(),
-                cfg.slack_signing_secret.get_secret_value(),
-                cfg.siem_signing_secret.get_secret_value(),
-                cfg.litellm_api_key.get_secret_value(),
-                cfg.knowledge_mcp_token.get_secret_value(),
-            )
-            if value
+            value.get_secret_value()
+            for name in type(cfg).model_fields
+            if isinstance(value := getattr(cfg, name), SecretStr) and value.get_secret_value()
         ),
         key=len,
         reverse=True,
