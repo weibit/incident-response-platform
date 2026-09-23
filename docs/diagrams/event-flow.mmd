@@ -1,0 +1,8 @@
+flowchart LR
+    A[Webhook] --> B[Gateway]
+    B --> C[(Outbox)]
+    C -->|Publisher relay| D[Kafka]
+    D -->|Worker intake| E[(Inbox)]
+    E -->|Worker job runner| F[Workflow graph]
+    F <--> G[(Checkpoints)]
+    F -->|Domain events| C

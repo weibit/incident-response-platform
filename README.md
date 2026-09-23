@@ -10,16 +10,9 @@ are intentionally interfaces/stubs. This is an operational starter, not an auton
 
 The core event flow:
 
-```mermaid
-flowchart LR
-    A[Webhook] --> B[Gateway]
-    B --> C[(Outbox)]
-    C -->|Publisher relay| D[Kafka]
-    D -->|Worker intake| E[(Inbox)]
-    E -->|Worker job runner| F[Workflow graph]
-    F <--> G[(Checkpoints)]
-    F -->|Domain events| C
-```
+![Core event flow from webhook through gateway, outbox, Kafka, inbox, and workflow checkpoints](docs/diagrams/event-flow.svg)
+
+[Editable Mermaid source](docs/diagrams/event-flow.mmd)
 
 The full architecture, including integrations:
 
