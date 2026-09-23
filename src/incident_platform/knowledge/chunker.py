@@ -46,6 +46,17 @@ def _frontmatter(text: str, source: str) -> tuple[dict[str, str], str]:
     return fields, text[match.end() :]
 
 
+def chunk_id(doc_id: str, heading: str, content: str) -> str:
+    """The one chunk id recipe.
+
+    Hashes content and heading only. Not the file path, so renaming does not churn ids;
+    not the position, so inserting a section above does not churn every id below it.
+    Exported because every loader must use it: two recipes would mean the same content
+    indexed twice, and evidence ids that move when they should not.
+    """
+    return hashlib.sha256(f"{doc_id}:{heading}:{content}".encode()).hexdigest()[:32]
+
+
 def chunk_markdown(text: str, source: str) -> Document:
     """Split one Markdown document into heading-scoped chunks. ATX headings only.
 
@@ -93,14 +104,14 @@ def chunk_markdown(text: str, source: str) -> Document:
         if not lines:
             continue
         content = "\n".join(lines)
-        # Hash content and heading only. Not the file path, so renaming does not churn
-        # ids; not the position, so inserting a section above does not churn every id
-        # below it. Identical sections collapse to one chunk, which is what they are.
-        chunk_id = hashlib.sha256(f"{doc_id}:{heading}:{content}".encode()).hexdigest()[:32]
-        if chunk_id in seen:
+        # Identical sections collapse to one chunk, which is what they are.
+        identifier = chunk_id(doc_id, heading, content)
+        if identifier in seen:
             continue
-        seen.add(chunk_id)
-        chunks.append(Chunk(chunk_id=chunk_id, heading=heading, body=content, ordinal=len(chunks)))
+        seen.add(identifier)
+        chunks.append(
+            Chunk(chunk_id=identifier, heading=heading, body=content, ordinal=len(chunks))
+        )
 
     if not chunks:
         raise CorpusError(f"{source}: document body is empty")
