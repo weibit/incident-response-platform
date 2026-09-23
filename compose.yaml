@@ -74,12 +74,66 @@ services:
       interval: 10s
       timeout: 5s
       retries: 6
+  stub-model:
+    <<: *app
+    command:
+      ["uvicorn", "incident_platform.devtools.stub_model:app",
+       "--host", "0.0.0.0", "--port", "8100"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8100/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+  litellm-postgres:
+    image: postgres:17
+    environment:
+      POSTGRES_USER: litellm
+      POSTGRES_PASSWORD: litellm
+      POSTGRES_DB: litellm
+    volumes: ["litellmdata:/var/lib/postgresql/data"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U litellm -d litellm"]
+      interval: 3s
+      timeout: 3s
+      retries: 30
+  redis:
+    image: redis:7-alpine
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 3s
+      timeout: 3s
+      retries: 30
+  litellm:
+    image: ghcr.io/berriai/litellm:v1.90.2
+    command: ["--config", "/app/proxy_server_config.yaml", "--port", "4000"]
+    volumes: ["./deploy/litellm/config.yaml:/app/proxy_server_config.yaml:ro"]
+    environment:
+      LITELLM_MASTER_KEY: ${LITELLM_API_KEY:-dev-litellm}
+      LITELLM_SALT_KEY: ${LITELLM_SALT_KEY:-dev-litellm-salt}
+      DATABASE_URL: postgresql://litellm:litellm@litellm-postgres:5432/litellm
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
+      # The gateway authenticates itself to the runbooks server; it does not relay a
+      # per-caller credential, because it connects before any caller exists.
+      KNOWLEDGE_MCP_TOKEN: ${KNOWLEDGE_MCP_TOKEN:-dev-knowledge}
+    depends_on:
+      litellm-postgres: {condition: service_healthy}
+      redis: {condition: service_healthy}
+      runbooks: {condition: service_healthy}
+      stub-model: {condition: service_healthy}
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:4000/health/readiness')"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+    restart: unless-stopped
   worker:
     <<: *app
     command: ["python", "-m", "incident_platform.worker.main"]
     depends_on:
       init: {condition: service_completed_successfully}
-      runbooks: {condition: service_healthy}
+      litellm: {condition: service_healthy}
 volumes:
   pgdata:
   kafkadata:
+  litellmdata:
