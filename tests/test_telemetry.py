@@ -56,8 +56,12 @@ def test_mask_output_is_json_serialisable(cfg):
     json.dumps(masked)
 
 
-def test_mask_covers_every_secret_field_on_settings(cfg):
+def test_mask_covers_a_secret_field_added_later(cfg):
     # The guard that matters: a credential added to Settings later must be redacted
-    # without anyone remembering to update the mask.
-    extra = cfg.model_copy(update={"knowledge_mcp_token": SecretStr("added-later-secret")})
-    assert "added-later-secret" not in build_mask(extra)(data="x added-later-secret y")
+    # without anyone remembering to update the mask. Subclassing is how the test states
+    # that literally, rather than reusing a field the mask already knew about.
+    class Extended(type(cfg)):
+        added_later: SecretStr = SecretStr("added-later-secret")
+
+    extended = Extended(**cfg.model_dump(), _env_file=None)
+    assert "added-later-secret" not in build_mask(extended)(data="x added-later-secret y")

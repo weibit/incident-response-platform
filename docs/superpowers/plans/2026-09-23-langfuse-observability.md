@@ -147,8 +147,6 @@ Ruff runs `E` and `I`, so an import appended mid-file fails `ruff check`. Then a
 tests themselves:
 
 ```python
-
-
 def test_mask_redacts_every_configured_secret(cfg):
     mask = build_mask(cfg)
     data = "jira and approve and status and slack and siem"
@@ -558,9 +556,7 @@ class RecordingModel:
 
 def _recording(monkeypatch):
     model = RecordingModel(Triage(severity="high", investigate=True, reason="ok"))
-    monkeypatch.setattr(
-        "incident_platform.integrations.llm._model", lambda cfg, alias: model
-    )
+    monkeypatch.setattr("incident_platform.integrations.llm._model", lambda cfg, alias: model)
     return model
 
 

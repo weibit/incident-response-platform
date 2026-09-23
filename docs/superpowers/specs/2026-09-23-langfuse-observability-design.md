@@ -131,9 +131,11 @@ the fallback and report it; do not force a resolution.
 singleton, which is what makes the bare `get_client()` calls in `integrations/evaluation.py`
 safe to use later.
 
-The mask redacts exact occurrences of the secrets the process already holds — the five
-`SecretStr` credentials in `config.py`, plus `litellm_api_key` and `knowledge_mcp_token` —
-and `Authorization: Bearer ...` shaped substrings. It walks nested dicts and lists and returns
+The mask redacts exact occurrences of every `SecretStr` field on the `Settings` model, and
+`Authorization: Bearer ...` shaped substrings. The fields are derived from the model rather
+than enumerated, so a credential added later cannot silently reach the trace store; a
+regression test pins that by subclassing `Settings` with an extra credential. Today the
+derived set is exactly the seven existing credentials, so this is behaviour-preserving. It walks nested dicts and lists and returns
 JSON-serialisable data.
 
 It does **not** attempt entropy scoring or PII regexes. Those false-positive on log lines,
