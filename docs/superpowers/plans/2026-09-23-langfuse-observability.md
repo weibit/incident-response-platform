@@ -1142,8 +1142,9 @@ boundary as the worker.
 
 - [ ] **Step 4: Confirm no stale claim survives**
 
-Run: `grep -rn "External Langfuse\|external Langfuse\|no extra local analytics\|clickhouse/object-storage" README.md docs/ AGENTS.md`
-Expected: no matches.
+Run: `grep -rn "External Langfuse\|external Langfuse\|no extra local analytics\|clickhouse/object-storage" README.md docs/ AGENTS.md --exclude-dir=superpowers`
+Expected: no matches. `--exclude-dir=superpowers` matters: the plan and spec quote the old
+wording as instructions, so without it this check can never pass.
 
 - [ ] **Step 5: Commit**
 
