@@ -127,9 +127,14 @@ the fallback and report it; do not force a resolution.
 ## Masking
 
 `Langfuse(mask=...)` is constructor-only, so the worker initialises the client once in
-`main()` via `telemetry.init_tracing(cfg)`. `get_client()` then returns that configured
-singleton, which is what makes the bare `get_client()` calls in `integrations/evaluation.py`
-safe to use later.
+`main()` via `telemetry.init_tracing(cfg)`. Clients obtained later through `get_client()`
+share that masked configuration, which is what makes the bare `get_client()` calls in
+`integrations/evaluation.py` safe to use.
+
+Note the SDK does **not** hand back the same object: it shares configuration through a
+resource manager keyed on the public key, so `get_client() is client` is False while the mask
+still applies. Identity is therefore not the property to assert, and a test pins the masking
+behaviour instead.
 
 The mask redacts exact occurrences of every `SecretStr` field on the `Settings` model, and
 `Authorization: Bearer ...` shaped substrings. The fields are derived from the model rather

@@ -18,6 +18,7 @@ Do not re-litigate these; they were checked against this repo's `.venv` before t
 
 - `Langfuse.create_trace_id(seed=...)` is a **staticmethod**, needs no client, returns a 32-char hex string, and is deterministic for a given seed.
 - `Langfuse(...)` accepts `mask` as a **constructor-only** parameter. It does **not** raise when credentials are absent — it logs `Authentication error` and disables itself.
+- `get_client()` does **not** return the same object `Langfuse(...)` created; configuration is shared through a resource manager keyed on the public key, so the mask still applies. `LangfuseResourceManager.reset()` clears that registry, which is how a test isolates itself.
 - `Langfuse.auth_check() -> bool` exists.
 - If a mask function raises, the SDK substitutes `"<fully masked due to failed mask function>"` and logs. Masks fail closed.
 - `langfuse.langchain.CallbackHandler.__init__` accepts `trace_context: Optional[TraceContext]` and `update_trace: bool = False`. `TraceContext` is `{"trace_id": str, "parent_span_id": NotRequired[str]}`.
