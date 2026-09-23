@@ -8,6 +8,7 @@ this module does not persist workflow state.
 import logging
 
 import structlog
+from langfuse import Langfuse
 
 
 def configure_logging():
@@ -21,6 +22,16 @@ def configure_logging():
         ],
         logger_factory=structlog.stdlib.LoggerFactory(),
     )
+
+
+def trace_id_for(incident_id: str, event_id: str) -> str:
+    """Derive one delivered event's Langfuse trace id.
+
+    A pure function of values every component already carries, so no mapping is stored.
+    A retry of the same event therefore reuses its trace rather than creating a near
+    duplicate, which is what keeps later score attachment idempotent.
+    """
+    return Langfuse.create_trace_id(seed=f"{incident_id}:{event_id}")
 
 
 def graph_config(incident_id: str, correlation_id: str, enabled: bool) -> dict:
