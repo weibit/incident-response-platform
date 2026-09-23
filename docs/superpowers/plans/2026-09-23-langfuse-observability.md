@@ -386,11 +386,17 @@ MSG
 
 ---
 
-### Task 4: Bind the graph config to the trace
+### Task 4: Bind the graph config to the trace, and wire the worker
+
+> **Merged with the former Task 6.** Changing `graph_config`'s signature without updating its
+> only caller leaves the suite red for two commits — verified: `test_pause_rebuild_resume_and_replay`
+> and `test_followup_does_not_overwrite_suspended_plan` fail with a `TypeError`. The call-site
+> change and the worker wiring therefore land in the same commit as the signature change.
 
 **Files:**
 - Modify: `src/incident_platform/telemetry.py:26-42`
-- Test: `tests/test_telemetry.py`
+- Modify: `src/incident_platform/worker/main.py:26`, `:88`, `main()`
+- Test: `tests/test_telemetry.py`, `tests/test_workflow.py`
 
 - [ ] **Step 1: Write the failing test**
 
@@ -494,17 +500,76 @@ selects checkpoint history; this module does not persist workflow state.
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `uv run pytest tests/test_telemetry.py -v`
-Expected: PASS, 15 passed
+Expected: PASS, 17 passed (14 existing plus these 3).
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 5: Update the caller in the same commit**
+
+In `src/incident_platform/worker/main.py`, change the import on line 26 to:
+
+```python
+from incident_platform.telemetry import configure_logging, graph_config, init_tracing
+```
+
+Change line 88 to:
+
+```python
+    config = graph_config(incident_id, correlation_id, str(event.event_id), cfg.langfuse_enabled)
+```
+
+In `main()`, add this immediately after `cfg = settings()`:
+
+```python
+    init_tracing(cfg)
+```
+
+The existing `flush()` in the `finally` block stays exactly as it is.
+
+- [ ] **Step 6: Add the caller's test**
+
+Add `from incident_platform.worker import main as worker_main` to the imports at the **top** of
+`tests/test_workflow.py`, keeping them sorted. Then append:
+
+```python
+async def test_trace_config_uses_the_delivered_event_id(cfg, store, incident, monkeypatch):
+    seen = {}
+    original = worker_main.graph_config
+
+    def spy(incident_id, correlation_id, event_id, enabled):
+        seen["event_id"] = event_id
+        return original(incident_id, correlation_id, event_id, enabled)
+
+    monkeypatch.setattr(worker_main, "graph_config", spy)
+    graph = build_graph(cfg, store, Analyst(cfg), MockEvidenceBackend(), InMemorySaver())
+    event = Envelope(
+        incident_id=incident["incident_id"],
+        correlation_id=incident["correlation_id"],
+        event_type="incident.created",
+        source="jira",
+        payload=incident["raw"],
+    )
+    await process_event(store, graph, cfg, event)
+    assert seen["event_id"] == str(event.event_id)
+```
+
+- [ ] **Step 7: Run the whole suite**
+
+Run: `uv run pytest`
+Expected: **129 passed, 23 skipped**. Nothing red.
+
+Run: `uv run ruff check .` and `uv run ruff format --check .` — both pass.
+
+- [ ] **Step 8: Commit**
 
 ```bash
-git add tests/test_telemetry.py src/incident_platform/telemetry.py
+git add tests/test_telemetry.py tests/test_workflow.py src/incident_platform/telemetry.py src/incident_platform/worker/main.py
 git commit -m "$(cat <<'MSG'
 feat(telemetry): bind the graph handler to a derived trace
 
 One trace per delivered event, grouped into one session per incident.
 Handler construction degrades to no callbacks rather than failing incidents.
+
+The caller moves in the same commit: a signature change without it leaves the
+suite red.
 
 Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
 MSG
@@ -646,87 +711,20 @@ MSG
 
 ---
 
-### Task 6: Wire the worker
+### Task 6: Wire the worker — MERGED INTO TASK 4
 
-**Files:**
-- Modify: `src/incident_platform/worker/main.py:26`, `:88`, `:166-172`
-- Test: `tests/test_workflow.py`
+This task no longer exists as a separate step. Its content (the `worker/main.py` import, the
+`graph_config` call site, `init_tracing(cfg)` in `main()`, and the
+`test_trace_config_uses_the_delivered_event_id` test) moved into Task 4.
 
-- [ ] **Step 1: Write the failing test**
+**Why:** `graph_config` gains a parameter in Task 4, and `worker/main.py` is its only caller.
+Landing those in separate commits leaves the suite red in between — verified: exactly
+`test_pause_rebuild_resume_and_replay` and `test_followup_does_not_overwrite_suspended_plan`
+fail with a `TypeError` on the three-argument call. Every commit in this plan must be green,
+so the signature change and its call site belong together.
 
-Add `from incident_platform.worker import main as worker_main` to the imports at the **top**
-of `tests/test_workflow.py`, keeping them sorted. Then append:
-
-```python
-async def test_trace_config_uses_the_delivered_event_id(cfg, store, incident, monkeypatch):
-    seen = {}
-    original = worker_main.graph_config
-
-    def spy(incident_id, correlation_id, event_id, enabled):
-        seen["event_id"] = event_id
-        return original(incident_id, correlation_id, event_id, enabled)
-
-    monkeypatch.setattr(worker_main, "graph_config", spy)
-    graph = build_graph(cfg, store, Analyst(cfg), MockEvidenceBackend(), InMemorySaver())
-    event = Envelope(
-        incident_id=incident["incident_id"],
-        correlation_id=incident["correlation_id"],
-        event_type="incident.created",
-        source="jira",
-        payload=incident["raw"],
-    )
-    await process_event(store, graph, cfg, event)
-    assert seen["event_id"] == str(event.event_id)
-```
-
-- [ ] **Step 2: Run test to verify it fails**
-
-Run: `uv run pytest tests/test_workflow.py::test_trace_config_uses_the_delivered_event_id -v`
-Expected: FAIL — `TypeError: spy() missing 1 required positional argument: 'enabled'` (the caller still passes three arguments).
-
-- [ ] **Step 3: Write minimal implementation**
-
-In `src/incident_platform/worker/main.py`, change the import on line 26 to:
-
-```python
-from incident_platform.telemetry import configure_logging, graph_config, init_tracing
-```
-
-Change line 88 to:
-
-```python
-    config = graph_config(incident_id, correlation_id, str(event.event_id), cfg.langfuse_enabled)
-```
-
-In `main()`, add the initialisation immediately after `cfg = settings()`:
-
-```python
-    init_tracing(cfg)
-```
-
-The existing `flush()` in the `finally` block stays exactly as it is.
-
-- [ ] **Step 4: Run test to verify it passes**
-
-Run: `uv run pytest tests/test_workflow.py -v`
-Expected: PASS, 17 passed (16 existing plus the new one)
-
-- [ ] **Step 5: Run the whole suite**
-
-Run: `uv run pytest && uv run ruff check . && uv run ruff format --check .`
-Expected: all pass. Integration tests needing `TEST_DATABASE_URL` skip as usual.
-
-- [ ] **Step 6: Commit**
-
-```bash
-git add tests/test_workflow.py src/incident_platform/worker/main.py
-git commit -m "$(cat <<'MSG'
-feat(worker): initialise tracing and trace per delivered event
-
-Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
-MSG
-)"
-```
+Task numbering is left unchanged so existing references stay valid. Proceed from Task 4 to
+Task 7.
 
 ---
 
