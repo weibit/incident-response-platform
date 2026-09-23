@@ -5,3 +5,9 @@ sources:
   - path: docs/runbooks/*.md
     kind: runbook
     loader: markdown
+  # Written explicitly rather than omitted: `null` declares global scope on purpose, and
+  # the manifest rejects a generic source that says nothing at all.
+  - path: docs/architecture/*.md
+    kind: architecture
+    loader: generic
+    service: null
