@@ -1,5 +1,9 @@
+from langchain_core.runnables import RunnableLambda
+
 from incident_platform.config import Settings
 from incident_platform.integrations.llm import Analyst
+from incident_platform.models import Triage
+from incident_platform.telemetry import trace_id_for
 
 BASE = {
     "_env_file": None,
@@ -55,3 +59,46 @@ async def test_mock_mode_still_returns_canned_triage(cfg):
     result = await Analyst(cfg).triage(STATE)
     assert result.severity == "high"
     assert result.investigate is True
+
+
+TRACED_STATE = {
+    "incident_id": "inc-1",
+    "input_event_id": "evt-1",
+    "incident": {"severity": "high", "service": "checkout"},
+    "evidence": [],
+}
+
+
+class RecordingModel:
+    def __init__(self, result):
+        self.result, self.bound = result, None
+
+    def bind(self, **kwargs):
+        self.bound = kwargs
+        return self
+
+    def with_structured_output(self, schema):
+        return RunnableLambda(lambda _: self.result)
+
+
+def _recording(monkeypatch):
+    model = RecordingModel(Triage(severity="high", investigate=True, reason="ok"))
+    monkeypatch.setattr("incident_platform.integrations.llm._model", lambda cfg, alias: model)
+    return model
+
+
+async def test_structured_binds_the_derived_trace_id(monkeypatch):
+    model = _recording(monkeypatch)
+    analyst = Analyst(_live(llm_model="shared-alias"))
+    await analyst.structured("triage", Triage, "Assess", TRACED_STATE)
+    assert model.bound == {
+        "extra_body": {"metadata": {"existing_trace_id": trace_id_for("inc-1", "evt-1")}}
+    }
+
+
+async def test_structured_skips_binding_without_identifiers(monkeypatch):
+    model = _recording(monkeypatch)
+    analyst = Analyst(_live(llm_model="shared-alias"))
+    # A gateway-side trace is never a reason a model call fails.
+    await analyst.structured("triage", Triage, "Assess", {"incident": {}, "evidence": []})
+    assert model.bound is None
