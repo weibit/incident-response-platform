@@ -988,6 +988,27 @@ MSG
 
 ### Task 8: Verification gate — gateway trace propagation
 
+> **GATE PASSED, verified 2026-09-23 against litellm v1.90.2 and Langfuse server 3.225.10.**
+>
+> The provisional key `existing_trace_id` is **correct**, and the proxy **does** honour it from
+> the request body — not only from a header. Evidence, end to end rather than by inspection:
+> a live `Analyst.triage` call through the gateway, with worker-side tracing switched off so the
+> gateway callback was the only possible trace author, produced a Langfuse trace whose id was
+> exactly `trace_id_for("probe-incident-8", "probe-event-8")` = `b6fceb52…f6e9`, carrying one
+> `GENERATION` observation for model `openai/stub-triage` with token usage `{input: 1, output: 1}`.
+>
+> Source confirmation: `litellm/integrations/langfuse/langfuse.py:641` pops `existing_trace_id`
+> from metadata and `:669` uses it as the trace's own id. The proxy accepts both `metadata` and
+> `litellm_metadata` in the body (`litellm_pre_call_utils.py:315`).
+>
+> **The two-plane fallback is therefore NOT in effect.** Traces are unified.
+>
+> One correction this produced: **cost is 0, and cannot be otherwise in the default setup.** The
+> stub upstream is not a priced provider model, so LiteLLM has no pricing to apply. Token usage
+> is recorded; cost becomes non-zero only against a real provider. Task 10's acceptance criterion
+> was written as "non-zero cost" and has been corrected accordingly.
+
+
 This is the one link that cannot be confirmed from the repository. **Its outcome decides the design.** Do not force a resolution.
 
 **Files:**
@@ -1163,7 +1184,10 @@ Open `http://localhost:3000`, sign in with `dev@example.com` / `dev-langfuse-pas
 
 - one trace per delivered event, not one per incident;
 - the graph's nodes appear as a nested tree, not a flat list;
-- a generation from the gateway carries a non-zero cost (this is what Task 8 bought — if cost is absent, the propagation fallback is in effect and must be recorded);
+- a generation from the gateway is attached to the same trace, carrying token usage (this is
+  what Task 8 bought). **Cost will be 0** against the stub upstream, which is not a priced
+  provider model; that is expected, not a failure. If no gateway generation appears at all,
+  the propagation fallback is in effect and must be recorded;
 - the approval resume and the original are two traces in **one** session named for the incident id;
 - the trace's top-level input and output are populated, which is `update_trace=True` working.
 

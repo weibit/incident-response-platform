@@ -49,3 +49,10 @@ mcp_servers:
 general_settings:
   master_key: os.environ/LITELLM_MASTER_KEY
   store_model_in_db: true
+
+litellm_settings:
+  # Second trace source. The worker writes the graph tree; the proxy attaches each
+  # generation, with the cost it actually billed, to the same trace via the
+  # existing_trace_id the worker forwards in request metadata.
+  success_callback: ["langfuse"]
+  failure_callback: ["langfuse"]

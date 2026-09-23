@@ -116,6 +116,11 @@ services:
       # The gateway authenticates itself to the runbooks server; it does not relay a
       # per-caller credential, because it connects before any caller exists.
       KNOWLEDGE_MCP_TOKEN: ${KNOWLEDGE_MCP_TOKEN:-dev-knowledge}
+      # Inert while the observability profile is down: the proxy simply cannot reach
+      # the collector and logs the failure. It must not stop serving.
+      LANGFUSE_PUBLIC_KEY: ${LANGFUSE_PUBLIC_KEY:-pk-lf-dev-public}
+      LANGFUSE_SECRET_KEY: ${LANGFUSE_SECRET_KEY:-sk-lf-dev-secret}
+      LANGFUSE_HOST: http://langfuse-web:3000
     depends_on:
       litellm-postgres: {condition: service_healthy}
       redis: {condition: service_healthy}
