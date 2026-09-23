@@ -68,6 +68,7 @@ src/incident_platform/
   workflow/          typed graph and deterministic authorization/policy
   integrations/      read tools, LLM analyst, notification/executor interfaces, evaluation hooks
   knowledge/         chunking, indexing, hybrid retrieval, read-only MCP server
+  devtools/          development-only stub upstream and gateway verifier
   models.py          Pydantic contracts and typed IncidentState
   storage.py         PostgreSQL outbox/inbox, dedup, approvals, audit, per-incident lock
   schema.sql         additive application schema
@@ -193,6 +194,14 @@ untrusted reference material: it is delimited and labeled, never treated as inst
 its `trusted` flag is set by the adapter rather than inferred from content. An empty result is
 returned as untrusted so it cannot satisfy the RCA corroboration rules.
 
+Model calls and MCP tool calls both leave the incident cluster through a LiteLLM gateway.
+The application names roles, not providers: `LLM_MODEL_TRIAGE`, `LLM_MODEL_RCA` and
+`LLM_MODEL_PLAN` hold gateway aliases that LiteLLM maps to real models, so changing which
+model serves a role is a gateway config change rather than an application redeploy. Each
+falls back to `LLM_MODEL` when unset. Retrieval is gateway-only: the worker has no direct
+route to the `runbooks` service, and `allowed_tools` in the gateway config pins the exposed
+tool set independently of what the server registers.
+
 To integrate live systems:
 
 1. Implement `EvidenceBackend` with scoped logs, metrics, K8s, deployments/config changes,
@@ -233,6 +242,10 @@ See `docs/verification.md` for what was actually run while creating this reposit
 ## Deliberate boundaries
 
 - Read adapters, notification delivery and real mutation are stubs; local evidence/actions are simulated.
+- The development stub upstream returns schema-shaped placeholder values, not reasoning. It
+  proves routing and wiring, never model quality. Replace the aliases in
+  `deploy/litellm/config.yaml` with real providers before drawing any conclusion about
+  analyst behavior.
 - Retrieval evidence is procedure and precedent, not observation. A valid RCA must cite at
   least one observational tool (logs, metrics, kubernetes, deployments, config_diffs,
   topology); runbooks and similar incidents alone cannot establish a root cause.

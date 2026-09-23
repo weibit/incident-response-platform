@@ -152,3 +152,24 @@ the first task, the way the pgvector narrowing question was settled in the previ
 - Whether a rejected gateway key surfaces through the MCP client with a message the
   adapter's existing 401/unauthorized check recognises. If not, that check needs widening
   rather than the error being left to burn the retry budget.
+
+## Corrections from implementation (2026-09-22)
+
+Three things the design asserted turned out to be wrong when run. Recorded here so the
+design does not keep claiming them.
+
+**The gateway holds the upstream credential; it does not forward the caller's.** The design
+said `x-mcp-runbooks-authorization` would carry the runbooks token through per call. LiteLLM
+connects to the upstream at its own startup to list tools, with no caller request in flight,
+and got 401. The server entry now carries `auth_type: bearer_token` and an `os.environ/`
+`authentication_token`. The security consequence is real and stated in `docs/operations.md`:
+a leaked gateway key now reaches the corpus, which a pure pass-through would not.
+
+**The MCP endpoint is `/mcp/`, with a trailing slash.** `/mcp` answers 307, and the MCP SDK
+does not follow redirects on POST, so the handshake failed opaquely.
+
+**`with_structured_output` does not need tool calls.** langchain-openai 1.6.4 defaults to
+`method="json_schema"`, sending `response_format` and expecting JSON content. The stub
+upstream is still justified, but for a different reason than the design gave: it records
+which upstream model name each call arrived under, which is what makes per-role routing
+observable rather than inferred. LiteLLM's `mock_response` could not show that.

@@ -116,3 +116,31 @@ re-running the indexer. It is an operator action, not an automatic migration.
 `KNOWLEDGE_MCP_TOKEN`. An `.env` predating this feature therefore fails the whole stack,
 not just retrieval. Copy the `KNOWLEDGE_*` block from `.env.example` into an existing
 `.env` before the first `docker compose up` after upgrading.
+
+## Gateway
+
+LiteLLM serves both `/v1/chat/completions` and `/mcp/` for this platform. It owns model
+selection, tool entitlements and usage accounting; the incident cluster holds only aliases
+and a gateway key. It runs against its own PostgreSQL instance rather than the incident
+database, so neither side's migrations touch the other, and Redis carries shared rate limits.
+
+Two credentials are in play, but not the way a pass-through design would suggest. The worker
+authenticates to the gateway with `x-litellm-api-key`. The gateway authenticates itself to
+the runbooks server with its own `authentication_token`, configured per MCP server. It has to
+own that credential rather than relay the caller's: it connects to runbooks at its own
+startup to list tools, when no caller request exists, and a relayed header cannot serve that
+call. A leaked gateway key therefore does grant retrieval access, which a pure pass-through
+design would not - weigh that before exposing the gateway more widely.
+
+The MCP endpoint needs its trailing slash. `/mcp` answers with a 307 to `/mcp/`, and the MCP
+SDK does not follow redirects on POST, so omitting it fails the initialize handshake with an
+opaque "Server returned an error response".
+
+Tool names are namespaced `<server_name>-<tool_name>`. Renaming the server in
+`deploy/litellm/config.yaml` without changing `MCP_SERVER` in `knowledge_backend.py` makes
+every retrieval call fail as an unknown tool.
+
+The worker depends on the gateway being healthy, and the gateway depends on its database.
+A gateway outage therefore stops the worker from starting, where previously only retrieval
+was affected. That is the cost of the gateway-only decision, and it is deliberate: there is
+no direct fallback path to misconfigure or forget to secure.
