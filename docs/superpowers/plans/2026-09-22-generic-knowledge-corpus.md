@@ -6,7 +6,7 @@
 
 **Architecture:** A `knowledge/loaders/` package turns sources declared in `corpus.yaml` into the existing `Document`/`Chunk` dataclasses. Markdown keeps its current parser untouched; other formats go through LangChain loaders and splitters. Everything below the loader layer is unchanged, including the chunk id recipe. The eight read tools collapse to seven as `runbooks` and `similar_incidents` become one `knowledge` tool taking a `kind`.
 
-**Tech Stack:** `langchain-community` loaders, `langchain-text-splitters`, `pypdf`, PostgreSQL with pgvector, `mcp` 2.2.0.
+**Tech Stack:** `langchain-text-splitters`, `pypdf`, PostgreSQL with pgvector, `mcp` 2.2.0. `langchain-community` was evaluated and rejected in Task 1: it is sunset, and its loaders are not needed once `pypdf` is used directly.
 
 **Design:** `docs/superpowers/specs/2026-09-22-generic-knowledge-corpus-design.md`
 
@@ -49,8 +49,7 @@ Nothing ships from this task but a recorded table. It exists because two earlier
 In `pyproject.toml`, extend the dependencies list:
 
 ```toml
-  "langchain-openai>=1,<2", "langchain-community>=0.4,<1",
-  "langchain-text-splitters>=1,<2", "pypdf>=6,<7",
+  "langchain-openai>=1,<2", "langchain-text-splitters>=1,<2", "pypdf>=6,<7",
 ```
 
 Then:
@@ -102,17 +101,17 @@ Expected: one document with `page_content` and `metadata`. **If `page_content` i
 
 Append a table to this task listing resolved versions, the splitter class and method, the loader classes, and the document attribute names. Later tasks read that table rather than re-deriving it.
 
-**Verified facts** (measured against the installed packages on 2026-09-22; `uv sync` resolved 124 packages total, 6 net-new: `greenlet`, `httpx-sse`, `langchain-classic`, `langchain-community`, `pypdf`, `sqlalchemy` — `langchain-text-splitters` was already present as a transitive dependency of `langchain`; `langchain-core` stayed pinned at `1.6.4`, no existing package version changed):
+**Verified facts** (measured against the installed packages on 2026-09-22; final footprint is **one** net-new package, `pypdf`, measured by diffing `uv.lock` against `main`. An earlier resolution that included `langchain-community` added six; that package was then removed as sunset. `langchain-core` stayed pinned at `1.6.4`, no existing package version changed):
 
 | Fact | Value |
 |---|---|
-| `langchain-community` version | `0.4.2` (emits a `DeprecationWarning` on import: "being sunset ... migration guidance toward standalone integration packages" — noted for later tasks, not acted on here) |
+| `langchain-community` | **Rejected and removed.** `0.4.2` emits a `DeprecationWarning` on import: it is sunset and no longer actively maintained. Its loaders wrap work `pypdf` does directly, so nothing was lost. |
 | `langchain-text-splitters` version | `1.1.2` |
 | `pypdf` version | `6.19.0` |
 | Splitter class | `langchain_text_splitters.RecursiveCharacterTextSplitter` |
 | Splitter method used | `.split_text(text: str)` → confirmed by direct call to return `list[str]` (not just by signature) |
-| Text loader class | `langchain_community.document_loaders.TextLoader`, from `langchain_community.document_loaders.text` |
-| PDF loader class | `langchain_community.document_loaders.PyPDFLoader`, from `langchain_community.document_loaders.pdf` |
+| Text reading | `Path.read_text()`. No loader class needed. |
+| PDF reading | `pypdf.PdfReader(path).pages`, each page's `extract_text()`. Verified to work on a generated PDF. |
 | Loader `.load()` return type | `list[Document]` where `Document` is `langchain_core.documents.base.Document` (confirmed for both `TextLoader` and `PyPDFLoader` by instantiating each and loading a real file) |
 | Document attribute names | `page_content` (str) and `metadata` (dict) — both confirmed present via `hasattr` and by reading real values |
 | `TextLoader` document count for a 2-paragraph file | 1 document; `page_content` holds the full file text verbatim; `metadata` = `{'source': '<abs path>'}` |
@@ -513,9 +512,11 @@ def _split(text: str) -> list[str]:
 
 def _read(path: Path) -> str:
     if path.suffix.lower() == ".pdf":
-        from langchain_community.document_loaders import PyPDFLoader
+        # pypdf directly rather than a LangChain PDF loader. The loader wraps exactly this
+        # and lives in langchain-community, which the package itself reports as sunset.
+        from pypdf import PdfReader
 
-        return "\n\n".join(page.page_content for page in PyPDFLoader(str(path)).load())
+        return "\n\n".join(page.extract_text() or "" for page in PdfReader(str(path)).pages)
     return path.read_text()
 
 
@@ -1302,7 +1303,7 @@ git commit -m "docs(knowledge): document the corpus manifest and its scoping rul
 
 Report at the end:
 
-- The resolved `langchain-community`, `langchain-text-splitters` and `pypdf` versions, and
+- The resolved `langchain-text-splitters` and `pypdf` versions, and
   any class name that differed from Task 1's recorded table.
 - Whether re-indexing the runbook corpus produced identical chunk ids, quoted.
 - Whether any graph test moved when the tool vocabulary changed. If one did, say which: it
