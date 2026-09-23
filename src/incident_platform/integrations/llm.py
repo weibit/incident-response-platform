@@ -80,8 +80,8 @@ class Analyst:
             "rca",
             InvestigationStep,
             "Choose one read tool or conclude RCA. Tools: logs, metrics, kubernetes, "
-            "deployments, config_diffs, topology, runbooks, similar_incidents. Retrieval "
-            "is optional. Conclude only with corroborating evidence.",
+            "deployments, config_diffs, topology, knowledge. Set kind when using "
+            "knowledge. Retrieval is optional. Conclude only with corroborating evidence.",
             state,
         )
 

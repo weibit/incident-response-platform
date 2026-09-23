@@ -132,3 +132,17 @@ def test_chunk_id_recipe_is_pinned():
     # truncation length, or the hash must be a deliberate, visible decision.
     doc = chunk_markdown("---\nid: x\ntitle: T\n---\n\n## A\n\nAlpha.\n", source="a.md")
     assert doc.chunks[0].chunk_id == "9a0239ee161383c03c16f9626a631859"
+
+
+def test_chunk_id_helper_matches_the_markdown_parser():
+    # Every loader must produce ids the same way, or the same content indexed through two
+    # paths would occupy two rows and evidence ids would stop being stable across a
+    # re-index. One recipe, exported, used by all of them.
+    from incident_platform.knowledge.chunker import chunk_id, chunk_markdown
+
+    document = chunk_markdown(
+        "---\nid: d1\ntitle: T\nservice: checkout\n---\n\n# Heading\n\nBody text.\n",
+        source="docs/runbooks/d1.md",
+    )
+    only = document.chunks[0]
+    assert chunk_id("d1", only.heading, only.body) == only.chunk_id

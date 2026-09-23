@@ -74,7 +74,7 @@ async def verify_retrieval() -> None:
     assert cfg.knowledge_enabled, "set KNOWLEDGE_ENABLED=true before running this"
     async with mcp_client(cfg) as client:
         backend = KnowledgeEvidenceBackend(MockEvidenceBackend(), client, cfg)
-        evidence = await backend.query("runbooks", "checkout", "rollback error rate")
+        evidence = await backend.query("knowledge", "checkout", "rollback error rate", "runbook")
         documents = evidence.observation.count("BEGIN DOCUMENT")
         assert documents == 5, f"expected five documents through the gateway, got {documents}"
         assert evidence.trusted is True

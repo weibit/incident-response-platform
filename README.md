@@ -68,6 +68,7 @@ src/incident_platform/
   workflow/          typed graph and deterministic authorization/policy
   integrations/      read tools, LLM analyst, notification/executor interfaces, evaluation hooks
   knowledge/         chunking, indexing, hybrid retrieval, read-only MCP server
+  knowledge/loaders/ per-format document loading into the shared chunk shape
   devtools/          development-only stub upstream and gateway verifier
   models.py          Pydantic contracts and typed IncidentState
   storage.py         PostgreSQL outbox/inbox, dedup, approvals, audit, per-incident lock
@@ -184,8 +185,14 @@ source/event ID returns the original IDs; reusing it with different content retu
 
 Mock mode uses deterministic analyst responses and labeled evidence. The real analyst uses
 `init_chat_model` and `with_structured_output`; read tools use LangChain `StructuredTool`.
-The investigator selects one read-only tool per round. Runbooks and similar incidents are optional
-RAG tools, never mandatory up-front retrieval. The default mock path uses topology, metrics and deployments.
+The investigator selects one read-only tool per round. Retrieval is one of them, `knowledge`,
+taking the corpus `kind` to search; it is never mandatory up-front retrieval. The default mock
+path uses topology, metrics and deployments.
+What corpora exist is declared in `corpus.yaml`, not in code: a source names a path, a kind, a
+loader and a service, so adding a document type needs no code change and no prompt change.
+Markdown with frontmatter keeps its existing parser; anything else goes through a text splitter
+and, for PDFs, `pypdf`. Every loader produces chunk ids with the same recipe, so evidence ids
+stay stable across a re-index.
 When `KNOWLEDGE_ENABLED=true`, those two tool names are served by a separate read-only MCP
 server (`runbooks` in Compose) that performs hybrid search over `docs/runbooks/` and resolved
 incidents, stored in PostgreSQL with pgvector. Lexical search needs no credentials; dense
@@ -242,6 +249,10 @@ See `docs/verification.md` for what was actually run while creating this reposit
 ## Deliberate boundaries
 
 - Read adapters, notification delivery and real mutation are stubs; local evidence/actions are simulated.
+- A document's `service` scopes every retrieval of it, and a generic source must declare one
+  even if that declaration is `service: null` for a global document. An omitted service is
+  rejected rather than defaulted, because an unscoped document is eligible for every
+  incident and would be cited as precedent for services it never described.
 - The development stub upstream returns schema-shaped placeholder values, not reasoning. It
   proves routing and wiring, never model quality. Replace the aliases in
   `deploy/litellm/config.yaml` with real providers before drawing any conclusion about

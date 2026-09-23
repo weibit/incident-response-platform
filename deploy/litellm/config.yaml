@@ -40,12 +40,11 @@ mcp_servers:
     auth_type: bearer_token
     authentication_token: os.environ/KNOWLEDGE_MCP_TOKEN
     available_on_public_internet: false
-    # Second enforcement layer for the read-only guarantee. The server registers only these
-    # two tools; this makes that independent of the server's own registration, and LiteLLM
+    # Second enforcement layer for the read-only guarantee. The server registers only this
+    # tool; this makes that independent of the server's own registration, and LiteLLM
     # applies it at both tools/list and tools/call.
     allowed_tools:
-      - search_runbooks
-      - search_similar_incidents
+      - search_knowledge
 
 general_settings:
   master_key: os.environ/LITELLM_MASTER_KEY

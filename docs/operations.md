@@ -144,3 +144,27 @@ The worker depends on the gateway being healthy, and the gateway depends on its 
 A gateway outage therefore stops the worker from starting, where previously only retrieval
 was affected. That is the cost of the gateway-only decision, and it is deliberate: there is
 no direct fallback path to misconfigure or forget to secure.
+
+## Corpus
+
+`corpus.yaml` declares every indexed source: a glob, a `kind`, a `loader` and a `service`.
+Adding a document type is a manifest entry, not a code change, and the available kinds reach
+the analyst through the knowledge tool's generated description.
+
+`service` is the scoping boundary. `service: null` means global and eligible for every
+incident; an omitted `service` on a non-Markdown source is an error rather than a default,
+because the failure mode is silent and serious: an unscoped document is retrieved for every
+service and can be cited as precedent for one it never described. Markdown may omit it
+because frontmatter carries it per document.
+
+A source matching no files fails ingestion. That is deliberate: a glob that quietly matches
+nothing looks identical to a healthy run, and the next prune would remove that kind entirely.
+
+`corpus.yaml` and every declared corpus directory must be copied into the image. The init job
+reads the manifest at startup, so a missing file there is not a degraded corpus - it is a
+stack that will not start.
+
+Re-indexing must not change chunk ids. They hash document id, heading and content, and
+evidence ids hash the chunk ids they cite, so a churned id silently invalidates a
+checkpointed citation. Any loader change should be checked against
+`test_reindexing_the_existing_corpus_keeps_every_chunk_id` before it ships.

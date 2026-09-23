@@ -37,19 +37,14 @@ mcp = MCPServer("incident-runbooks", lifespan=lifespan)
 
 
 @mcp.tool()
-async def search_runbooks(service: str, query: str, limit: int = 5) -> list[dict]:
-    """Search operational runbooks scoped to a service. Read-only."""
-    found = await search(
-        pool, kind="runbook", service=service, query=query, limit=limit, embedder=embedder
-    )
-    return [asdict(snippet) for snippet in found]
+async def search_knowledge(service: str, query: str, kind: str = "", limit: int = 5) -> list[dict]:
+    """Search indexed documents scoped to a service. Read-only.
 
-
-@mcp.tool()
-async def search_similar_incidents(service: str, query: str, limit: int = 5) -> list[dict]:
-    """Search resolved prior incidents scoped to a service. Read-only."""
+    An empty kind searches every corpus; an unknown one matches nothing, which the caller
+    reports as an untrusted empty result rather than an error.
+    """
     found = await search(
-        pool, kind="incident", service=service, query=query, limit=limit, embedder=embedder
+        pool, kind=kind or None, service=service, query=query, limit=limit, embedder=embedder
     )
     return [asdict(snippet) for snippet in found]
 

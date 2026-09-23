@@ -7,9 +7,11 @@ from psycopg.rows import dict_row
 from psycopg_pool import AsyncConnectionPool
 
 from incident_platform.config import settings
-from incident_platform.knowledge.chunker import Chunk, Document, chunk_markdown
+from incident_platform.knowledge.chunker import Chunk, Document
+from incident_platform.knowledge.corpus import load_manifest
+from incident_platform.knowledge.loaders import load_source
 
-CORPUS = Path("docs/runbooks")
+MANIFEST = Path("corpus.yaml")
 
 
 async def ingest_documents(pool, documents: list[Document], kind: str) -> int:
@@ -70,19 +72,29 @@ async def prune_missing(pool, documents: list[Document], kind: str) -> int:
     return result.rowcount
 
 
-def load_corpus(directory: Path = CORPUS) -> list[Document]:
-    paths = sorted(directory.glob("*.md"))
-    if not paths:
-        raise FileNotFoundError(f"No runbooks found under {directory}")
-    documents = [chunk_markdown(path.read_text(), source=str(path)) for path in paths]
+def by_kind(manifest: Path = MANIFEST) -> dict[str, list[Document]]:
+    """Documents grouped by the kind their source declared.
+
+    The only way to read the corpus. A flat list across kinds invites a caller to ingest
+    everything under one kind, which is how a document lands in the wrong corpus and is
+    retrieved as the wrong sort of evidence.
+
+    Duplicate ids are rejected across the whole corpus rather than per source, because
+    documents share one table: two sources both producing `checkout` would overwrite each
+    other's chunks row by row.
+    """
+    grouped: dict[str, list[Document]] = {}
     seen: dict[str, str] = {}
-    for doc in documents:
-        if doc.doc_id in seen:
-            raise ValueError(
-                f"Duplicate runbook id {doc.doc_id!r} in {doc.source} and {seen[doc.doc_id]}"
-            )
-        seen[doc.doc_id] = doc.source
-    return documents
+    for source in load_manifest(manifest):
+        for document in load_source(source):
+            if document.doc_id in seen:
+                raise ValueError(
+                    f"Duplicate document id {document.doc_id!r} in {document.source} "
+                    f"and {seen[document.doc_id]}"
+                )
+            seen[document.doc_id] = document.source
+            grouped.setdefault(source.kind, []).append(document)
+    return grouped
 
 
 async def ensure_vector_column(pool, dim: int) -> None:
@@ -135,7 +147,7 @@ WHERE state->>'status' = 'resolved' AND state->'rca'->>'hypothesis' IS NOT NULL
 
 
 async def ingest_resolved_incidents(pool) -> int:
-    """Index resolved incidents so similar_incidents has a corpus.
+    """Index resolved incidents as the `incident` corpus.
 
     Cold-starts empty, which is correct: with no history there is no precedent, and
     the backend reports an empty result as untrusted rather than inventing one.
@@ -179,15 +191,16 @@ async def main() -> None:
     try:
         from incident_platform.knowledge.embeddings import provider
 
-        corpus = load_corpus()
-        count = await ingest_documents(pool, corpus, kind="runbook")
-        pruned = await prune_missing(pool, corpus, kind="runbook")
+        totals = []
+        for kind, documents in by_kind().items():
+            count = await ingest_documents(pool, documents, kind=kind)
+            pruned = await prune_missing(pool, documents, kind=kind)
+            totals.append(f"{kind}: {count} chunks, pruned {pruned}")
         incidents = await ingest_resolved_incidents(pool)
         # After the incident ingest, so chunks from both corpora are embedded in one run.
         embedded = await embed_corpus(pool, provider(cfg))
         print(
-            f"indexed {count} runbook chunks, pruned {pruned} documents, "
-            f"{incidents} incident chunks, embedded {embedded}",
+            f"indexed {'; '.join(totals)}; {incidents} incident chunks, embedded {embedded}",
             file=sys.stderr,
         )
     finally:

@@ -26,7 +26,7 @@ shape cannot be indexed at all.
 
 | Decision | Choice |
 |---|---|
-| Framework | `langchain-community` loaders + `langchain-text-splitters`. |
+| Framework | `langchain-text-splitters` only, plus `pypdf` used directly. |
 | Why not LlamaIndex | 40 net-new dependencies against 13, and a parallel stack to hold in mind. |
 | Why not `unstructured` | 50 net-new, including spacy, numba and llvmlite into a slim image. |
 | Corpus definition | A `corpus.yaml` manifest declaring sources, kinds and scoping. |
@@ -202,3 +202,20 @@ a retrieval tool name.
   matters for generic sources.
 - That re-indexing the existing corpus produces byte-identical chunk ids, checked against
   the database before and after rather than assumed.
+
+## Correction from implementation (2026-09-22)
+
+**`langchain-community` is not used.** Task 1 added it, then found the package emits a
+DeprecationWarning on import: it is sunset and no longer actively maintained, with migration
+guidance toward standalone integration packages.
+
+Removing it cost nothing, because its loaders were only ever wrappers around work we can do
+directly. `langchain-text-splitters` depends on `langchain-core` alone, which this project
+already has, and `pypdf` extracts page text in a line. The corrected footprint is **one**
+net-new package, `pypdf`, measured against `main` rather than estimated.
+
+That also makes the framework comparison in this document narrower than it reads. The choice
+was never really LangChain against LlamaIndex for this feature: it was which splitter to use,
+because everything else the frameworks offer here is a thin wrapper over a parser this
+project can call itself. The dependency numbers that decided it remain correct, but the real
+answer turned out to be smaller than any of the three options compared.

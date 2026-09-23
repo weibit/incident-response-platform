@@ -6,7 +6,7 @@
 
 **Architecture:** A `knowledge/loaders/` package turns sources declared in `corpus.yaml` into the existing `Document`/`Chunk` dataclasses. Markdown keeps its current parser untouched; other formats go through LangChain loaders and splitters. Everything below the loader layer is unchanged, including the chunk id recipe. The eight read tools collapse to seven as `runbooks` and `similar_incidents` become one `knowledge` tool taking a `kind`.
 
-**Tech Stack:** `langchain-community` loaders, `langchain-text-splitters`, `pypdf`, PostgreSQL with pgvector, `mcp` 2.2.0.
+**Tech Stack:** `langchain-text-splitters`, `pypdf`, PostgreSQL with pgvector, `mcp` 2.2.0. `langchain-community` was evaluated and rejected in Task 1: it is sunset, and its loaders are not needed once `pypdf` is used directly.
 
 **Design:** `docs/superpowers/specs/2026-09-22-generic-knowledge-corpus-design.md`
 
@@ -44,13 +44,12 @@ Nothing ships from this task but a recorded table. It exists because two earlier
 - Modify: `pyproject.toml`
 - Modify: this plan file (Step 4)
 
-- [ ] **Step 1: Add the dependencies**
+- [x] **Step 1: Add the dependencies**
 
 In `pyproject.toml`, extend the dependencies list:
 
 ```toml
-  "langchain-openai>=1,<2", "langchain-community>=0.4,<1",
-  "langchain-text-splitters>=1,<2", "pypdf>=6,<7",
+  "langchain-openai>=1,<2", "langchain-text-splitters>=1,<2", "pypdf>=6,<7",
 ```
 
 Then:
@@ -61,7 +60,7 @@ uv sync
 
 Expected: resolution succeeds. If it fails on a `langchain-core` conflict, stop and report the conflicting pins rather than forcing a resolution.
 
-- [ ] **Step 2: Confirm the class names against the installed packages**
+- [x] **Step 2: Confirm the class names against the installed packages**
 
 ```bash
 uv run python -c "
@@ -80,7 +79,7 @@ print('TextLoader.load:', inspect.signature(TextLoader.load))
 
 Record: the resolved versions, whether `RecursiveCharacterTextSplitter.split_text` returns `list[str]`, and what a loader's `load()` returns.
 
-- [ ] **Step 3: Confirm what a loaded document carries**
+- [x] **Step 3: Confirm what a loaded document carries**
 
 ```bash
 uv run python -c "
@@ -98,11 +97,27 @@ print('metadata keys:', list(docs[0].metadata))
 
 Expected: one document with `page_content` and `metadata`. **If `page_content` is not the attribute name, stop and report** — every mapping in Task 4 depends on it.
 
-- [ ] **Step 4: Record the facts in this file**
+- [x] **Step 4: Record the facts in this file**
 
 Append a table to this task listing resolved versions, the splitter class and method, the loader classes, and the document attribute names. Later tasks read that table rather than re-deriving it.
 
-- [ ] **Step 5: Commit**
+**Verified facts** (measured against the installed packages on 2026-09-22; final footprint is **one** net-new package, `pypdf`, measured by diffing `uv.lock` against `main`. An earlier resolution that included `langchain-community` added six; that package was then removed as sunset. `langchain-core` stayed pinned at `1.6.4`, no existing package version changed):
+
+| Fact | Value |
+|---|---|
+| `langchain-community` | **Rejected and removed.** `0.4.2` emits a `DeprecationWarning` on import: it is sunset and no longer actively maintained. Its loaders wrap work `pypdf` does directly, so nothing was lost. |
+| `langchain-text-splitters` version | `1.1.2` |
+| `pypdf` version | `6.19.0` |
+| Splitter class | `langchain_text_splitters.RecursiveCharacterTextSplitter` |
+| Splitter method used | `.split_text(text: str)` → confirmed by direct call to return `list[str]` (not just by signature) |
+| Text reading | `Path.read_text()`. No loader class needed. |
+| PDF reading | `pypdf.PdfReader(path).pages`, each page's `extract_text()`. Verified to work on a generated PDF. |
+| Loader `.load()` return type | `list[Document]` where `Document` is `langchain_core.documents.base.Document` (confirmed for both `TextLoader` and `PyPDFLoader` by instantiating each and loading a real file) |
+| Document attribute names | `page_content` (str) and `metadata` (dict) — both confirmed present via `hasattr` and by reading real values |
+| `TextLoader` document count for a 2-paragraph file | 1 document; `page_content` holds the full file text verbatim; `metadata` = `{'source': '<abs path>'}` |
+| `PyPDFLoader` document count for a 1-page blank PDF | 1 document (one `Document` per page); `metadata` keys observed: `producer`, `creator`, `creationdate`, `source`, `total_pages`, `page`, `page_label` |
+
+- [x] **Step 5: Commit**
 
 ```bash
 git add pyproject.toml uv.lock docs/superpowers/plans/2026-09-22-generic-knowledge-corpus.md
@@ -497,9 +512,11 @@ def _split(text: str) -> list[str]:
 
 def _read(path: Path) -> str:
     if path.suffix.lower() == ".pdf":
-        from langchain_community.document_loaders import PyPDFLoader
+        # pypdf directly rather than a LangChain PDF loader. The loader wraps exactly this
+        # and lives in langchain-community, which the package itself reports as sunset.
+        from pypdf import PdfReader
 
-        return "\n\n".join(page.page_content for page in PyPDFLoader(str(path)).load())
+        return "\n\n".join(page.extract_text() or "" for page in PdfReader(str(path)).pages)
     return path.read_text()
 
 
@@ -608,7 +625,11 @@ async def test_reindexing_the_existing_corpus_keeps_every_chunk_id(pool):
 
 Run: `TEST_DATABASE_URL=postgresql://incident:incident@localhost:5432/incident_test uv run pytest tests/test_knowledge_retrieve.py -m integration -k reindexing -v`
 
-Expected: FAIL. `load_corpus()` still takes a directory and returns documents for one kind, so the call signature does not match. Note the exact error, then implement.
+Expected: **this test passes before the change**, and that is correct rather than a
+mistake in it. `corpus.yaml` declares the same single source the old glob hardcoded, so both
+paths produce the same ten chunks with the same ids. It is a regression guard, not a
+red-green test: its job is to fail if the manifest path ever produces different ids, which is
+the failure this whole plan must not cause. Run it, see it pass, and proceed.
 
 - [ ] **Step 3: Write the implementation**
 
@@ -1086,7 +1107,10 @@ source that says nothing at all.
 
 - [ ] **Step 3: Make it available inside the image**
 
-In `Dockerfile`, extend the corpus copy:
+`COPY corpus.yaml ./corpus.yaml` was pulled forward into Task 5, because deferring it to
+here left the container broken the moment indexing became manifest-driven: the init job dies
+with `FileNotFoundError: corpus.yaml` and every downstream service fails to start. Only the
+new corpus directory remains to add:
 
 ```dockerfile
 COPY docs/runbooks ./docs/runbooks
@@ -1286,7 +1310,7 @@ git commit -m "docs(knowledge): document the corpus manifest and its scoping rul
 
 Report at the end:
 
-- The resolved `langchain-community`, `langchain-text-splitters` and `pypdf` versions, and
+- The resolved `langchain-text-splitters` and `pypdf` versions, and
   any class name that differed from Task 1's recorded table.
 - Whether re-indexing the runbook corpus produced identical chunk ids, quoted.
 - Whether any graph test moved when the tool vocabulary changed. If one did, say which: it

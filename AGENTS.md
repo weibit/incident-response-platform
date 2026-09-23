@@ -24,3 +24,7 @@ Preserve these invariants:
   gateway config.
 - The stub upstream is development-only. Never point a deployment's aliases at it, and never
   treat its output as model behavior.
+- Every loader uses `chunker.chunk_id`. A second id recipe silently splits one document
+  across two rows and destabilises evidence ids.
+- A retrieval tool never takes `service` as an argument. It is injected from the incident so
+  the analyst cannot widen its own scope.
