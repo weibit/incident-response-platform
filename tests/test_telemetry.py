@@ -166,3 +166,15 @@ def test_graph_config_degrades_when_the_handler_cannot_be_built(monkeypatch):
     config = graph_config("inc-1", "corr-1", "evt-1", True)
     assert config["callbacks"] == []
     assert config["metadata"]["incident_id"] == "inc-1"
+
+
+def test_init_tracing_survives_a_malformed_sdk_env(cfg, monkeypatch):
+    # The SDK parses these before it decides to disable itself, so a typo raises out of
+    # the constructor rather than degrading. Startup must not depend on tracing.
+    monkeypatch.setenv("LANGFUSE_SAMPLE_RATE", "1,0")
+    assert init_tracing(cfg.model_copy(update={"langfuse_enabled": True})) is None
+
+
+def test_init_tracing_survives_a_malformed_timeout(cfg, monkeypatch):
+    monkeypatch.setenv("LANGFUSE_TIMEOUT", "abc")
+    assert init_tracing(cfg.model_copy(update={"langfuse_enabled": True})) is None

@@ -94,7 +94,14 @@ def init_tracing(cfg):
     """
     if not cfg.langfuse_enabled:
         return None
-    client = Langfuse(mask=build_mask(cfg))
+    try:
+        client = Langfuse(mask=build_mask(cfg))
+    except Exception as exc:
+        # The SDK parses LANGFUSE_SAMPLE_RATE and LANGFUSE_TIMEOUT before it decides to
+        # disable itself, so a typo in either raises out of the constructor. Worker startup
+        # must never depend on tracing.
+        log.warning("langfuse.init_failed", error_type=type(exc).__name__)
+        return None
     try:
         if not client.auth_check():
             log.warning("langfuse.unauthenticated")
