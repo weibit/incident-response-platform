@@ -1,0 +1,7 @@
+# Every indexed source. `service` scopes retrieval; `service: null` is global and
+# eligible for every incident, which is why a non-markdown source must say so explicitly
+# rather than leaving the key out.
+sources:
+  - path: docs/runbooks/*.md
+    kind: runbook
+    loader: markdown
