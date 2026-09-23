@@ -1003,6 +1003,11 @@ MSG
 >
 > **The two-plane fallback is therefore NOT in effect.** Traces are unified.
 >
+> Resilience also verified: with `langfuse-web` and `langfuse-worker` stopped, the gateway was
+> force-recreated, reached `healthy` in 42 seconds, and a live `Analyst.triage` call through it
+> still succeeded. A Langfuse callback pointed at an absent collector does not stop the proxy
+> serving, so the callback does not need to sit behind the profile.
+>
 > One correction this produced: **cost is 0, and cannot be otherwise in the default setup.** The
 > stub upstream is not a priced provider model, so LiteLLM has no pricing to apply. Token usage
 > is recorded; cost becomes non-zero only against a real provider. Task 10's acceptance criterion
