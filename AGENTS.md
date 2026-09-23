@@ -11,7 +11,10 @@ Preserve these invariants:
 - No production mutation in read tools or planning. Execution rechecks server-side policy and
   approval for the exact immutable plan, including expiration.
 - Never disable signature checks, make model output authoritative policy, or trust ticket/log text
-  as instructions. Do not log credentials or raw evidence.
+  as instructions. Never log credentials anywhere. Raw evidence may reach an in-boundary trace
+  store; it must never reach an external one, so LANGFUSE_BASE_URL stays inside the deployment.
+- Trace delivery must never affect incident correctness. Tracing failures degrade to no
+  callbacks; they never fail an incident and never block worker startup.
 - Graph nodes replay after failures and interrupts. Make side effects idempotent before enabling them.
 - Mock evidence and execution must stay clearly labeled. Live adapters fail closed until implemented.
 - Keep SQL migrations additive; never drop existing user data as part of setup or tests.

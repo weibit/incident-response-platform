@@ -2,7 +2,7 @@
 
 A Codex-ready Python monorepo with a FastAPI event gateway, Kafka transport, a separate
 LangGraph worker, PostgreSQL application/checkpoint state, LangChain tools/model integration,
-and opt-in external Langfuse tracing. **Local mode runs without LLM credentials and only simulates
+and opt-in self-hosted Langfuse tracing. **Local mode runs without LLM credentials and only simulates
 evidence and execution.** Live evidence, Jira/Slack notification, and production execution adapters
 are intentionally interfaces/stubs. This is an operational starter, not an autonomous production operator.
 
@@ -27,7 +27,7 @@ flowchart LR
 thread_id = incident_id"]
   Graph <--> Checkpoints[(PostgreSQL checkpoints)]
   Graph --> Tools["LangChain read-only tools / on-demand RAG"]
-  Graph -->|Callbacks + metadata| Langfuse["External Langfuse"]
+  Graph -->|Callbacks + metadata| Langfuse["Self-hosted Langfuse"]
   Graph -->|Durable domain events| Outbox
   Outbox --> Domain["Kafka domain topics"]
 ```
@@ -60,10 +60,12 @@ flowchart TD
 **Kafka vs LangGraph:** Kafka distributes durable events between services and independent subscribers.
 It does not sit between graph nodes. LangGraph owns the incident's workflow, checkpoints, retries,
 conditional branches and interrupt/resume. PostgreSQL owns ingress deduplication, outbox, inbox,
-approvals, audit and simulated execution ledger. Redis is unnecessary for this starter.
+approvals, audit and simulated execution ledger. Redis is unnecessary for the incident platform's own state; the `redis` and `langfuse-redis`
+services in Compose belong to the gateway and the tracing profile, not to this workflow.
 
 `incident_id` is the Kafka key, graph `thread_id`, database identifier, log correlation value and
-Langfuse session/metadata identifier. Each delivery has its own stable `event_id`. Source-scoped
+Langfuse session/metadata identifier. Each delivery has its own stable `event_id`, and the pair
+derives that delivery's trace id, so a trace is addressable without storing a mapping. Source-scoped
 external IDs produce deterministic UUIDs. A trusted adapter can provide an explicit UUID `incident_id`
 to correlate Jira and Slack into the same incident. The starter sets `correlation_id = incident_id`.
 
@@ -82,7 +84,7 @@ src/incident_platform/
   storage.py         PostgreSQL outbox/inbox, dedup, approvals, audit, per-incident lock
   schema.sql         additive application schema
   transport.py       idempotent Kafka producer + transactional outbox relay
-  telemetry.py       structured logs and Langfuse callbacks
+  telemetry.py       structured logs, trace ids, credential masking, Langfuse callbacks
   bootstrap.py       one-time application/checkpoint/topic setup
 scripts/             curl fixtures, signing helper, end-to-end HTTP demo
  tests/              gateway, graph, policy, PostgreSQL recovery tests
@@ -229,11 +231,22 @@ To integrate live systems:
    Live mode currently fails closed at unconfigured evidence/execution adapters.
 4. Replace simulated verification with fresh service SLO measurements over an observation window.
 
-For external Langfuse, set `LANGFUSE_ENABLED=true`, `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY`
-and `LANGFUSE_BASE_URL`. `langfuse.langchain.CallbackHandler` traces the graph and nested chains/tools,
-with `langfuse_session_id=incident_id` and correlation metadata. Langfuse v3 credentials are read by
-its SDK. No extra local analytics/clickhouse/object-storage stack is needed. External traces may
-contain input/evidence: deploy redaction, access controls and retention before enabling with live data.
+Langfuse is self-hosted in the optional `observability` Compose profile, off by default:
+`docker compose --profile observability up`. That profile adds its own PostgreSQL, ClickHouse,
+Redis and MinIO, so the ordinary `up` is unchanged. The UI is published on
+`http://localhost:3100`, and project keys are provisioned headlessly, so the stack comes up
+already usable. Set `LANGFUSE_ENABLED=true` to start exporting.
+
+`langfuse.langchain.CallbackHandler` traces the graph and nested chains/tools. Each delivered
+event gets its own trace, whose id is derived from `incident_id` and `event_id` rather than
+stored, so it is recomputable after a restart or replay. An incident's traces — its initial
+event and any approval resume — are grouped by `langfuse_session_id=incident_id`. The worker
+forwards that same id to the gateway in request metadata, so LiteLLM reports each generation
+into the same trace and the graph tree and model usage appear together.
+
+Traces carry evidence, ticket text and runbook snippets **verbatim**; only credentials are
+masked. That is defensible only because the collector sits inside the deployment boundary, so
+never point `LANGFUSE_BASE_URL` at an external host.
 `integrations/evaluation.py` supplies explicit prompt, score and dataset hooks; `evals/cases.jsonl`
 is ready to seed evaluation datasets. Upload/evaluation is opt-in, not automatically invoked.
 
