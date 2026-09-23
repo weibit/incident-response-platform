@@ -625,7 +625,11 @@ async def test_reindexing_the_existing_corpus_keeps_every_chunk_id(pool):
 
 Run: `TEST_DATABASE_URL=postgresql://incident:incident@localhost:5432/incident_test uv run pytest tests/test_knowledge_retrieve.py -m integration -k reindexing -v`
 
-Expected: FAIL. `load_corpus()` still takes a directory and returns documents for one kind, so the call signature does not match. Note the exact error, then implement.
+Expected: **this test passes before the change**, and that is correct rather than a
+mistake in it. `corpus.yaml` declares the same single source the old glob hardcoded, so both
+paths produce the same ten chunks with the same ids. It is a regression guard, not a
+red-green test: its job is to fail if the manifest path ever produces different ids, which is
+the failure this whole plan must not cause. Run it, see it pass, and proceed.
 
 - [ ] **Step 3: Write the implementation**
 
