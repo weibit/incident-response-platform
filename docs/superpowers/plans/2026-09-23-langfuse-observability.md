@@ -581,6 +581,16 @@ MSG
 
 ### Task 5: Forward the trace id to the gateway
 
+> **CORRECTED AFTER IMPLEMENTATION.** The code in Steps 1 and 3 below is the form that was
+> originally written and shipped as `4cd98bd`. It is **broken**: `model.bind(extra_body=...)
+> .with_structured_output(schema)` discards the binding, so the trace id never reached the
+> gateway. Fixed in `a151db4` by introducing `_structured_model(model, schema, state)`, which
+> calls `model.with_structured_output(schema, extra_body=...)`, and by replacing the two tests
+> with ones that compose a real model. The steps below are left as written so the record of
+> what happened stays honest; read `src/incident_platform/integrations/llm.py` for the code
+> that actually ships.
+
+
 **Files:**
 - Modify: `src/incident_platform/integrations/llm.py:51-56`
 - Test: `tests/test_llm_roles.py`
