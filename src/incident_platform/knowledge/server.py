@@ -1,3 +1,11 @@
+"""Authenticated, read-only MCP endpoint for indexed knowledge search.
+
+Expose search_knowledge() with service/kind filters and optional embeddings. Manage
+the retrieval database pool and HTTP bearer authentication. The worker adapter supplies
+incident scope. Corpus loading and indexing are separate write-capable operations
+in index.py, never analyst tools on this server.
+"""
+
 import hmac
 from contextlib import asynccontextmanager
 from dataclasses import asdict

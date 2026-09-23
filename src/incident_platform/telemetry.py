@@ -1,3 +1,10 @@
+"""Configure structured JSON logs and optional Langfuse tracing.
+
+graph_config() sets incident_id as the LangGraph thread_id and adds correlation
+metadata, tags, and optional callbacks. The thread ID selects checkpoint history;
+this module does not persist workflow state.
+"""
+
 import logging
 
 import structlog

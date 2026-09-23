@@ -1,3 +1,18 @@
+"""PostgreSQL access layer shared by the gateway, worker, and workflow nodes.
+
+Store manages application persistence:
+- Ingress deduplication and outbox events awaiting publication to Kafka.
+- Inbox jobs, completion tracking, retry scheduling, and dead-letter events.
+- Per-incident locks that prevent workers from advancing the same incident together.
+- Incident status snapshots, approval decisions, audit records, and simulated execution.
+
+Related writes share a database transaction where needed, such as accepting an alert
+and queuing its event, or recording an approval and queuing its notification event.
+Kafka publishing lives in transport.py; job processing lives in worker/main.py.
+LangGraph checkpoints are managed separately by AsyncPostgresSaver. The incident
+snapshots stored here support status reads, not workflow recovery.
+"""
+
 import hashlib
 import json
 from contextlib import asynccontextmanager

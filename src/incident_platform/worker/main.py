@@ -1,3 +1,11 @@
+"""Connect durable incoming events to the incident workflow.
+
+Run three concurrent loops: Kafka intake into the inbox, inbox job processing, and
+outbox publication. Offsets advance after durable receipt. The job loop runs one graph
+invocation at a time per process, using incident locks and checkpoints for recovery.
+Approval interrupts release the worker; additional processes provide job concurrency.
+"""
+
 import asyncio
 import hashlib
 from contextlib import AsyncExitStack

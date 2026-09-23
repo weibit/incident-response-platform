@@ -1,3 +1,10 @@
+"""Validate bearer credentials and signed HTTP requests.
+
+HMAC verification uses the original request bytes and a five-minute timestamp window,
+with Slack's v0 signature format supported. Routes enforce actor restrictions, while
+workflow policy separately controls permission to execute a mitigation plan.
+"""
+
 import hashlib
 import hmac
 import time

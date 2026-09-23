@@ -1,3 +1,10 @@
+"""Validated runtime settings loaded from environment variables and .env.
+
+Group database/Kafka connections, credentials, workflow limits, model gateway aliases,
+and knowledge retrieval options. Validators reject invalid configuration; settings()
+caches it per process. Worker replica counts belong to deployment configuration.
+"""
+
 from functools import lru_cache
 
 from pydantic import Field, SecretStr, model_validator

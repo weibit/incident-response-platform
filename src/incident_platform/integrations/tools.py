@@ -1,3 +1,11 @@
+"""Read-only evidence tools and external adapter interfaces.
+
+Wrap backend queries as LangChain tools with incident service scope bound by the
+application. Mock evidence is labeled; unconfigured live evidence adapters fail closed.
+Notification and mutation protocols describe future integrations, not working live
+implementations. Investigation tools expose reads, not remediation actions.
+"""
+
 from typing import Protocol
 from uuid import NAMESPACE_URL, uuid5
 

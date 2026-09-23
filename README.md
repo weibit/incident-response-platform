@@ -8,6 +8,21 @@ are intentionally interfaces/stubs. This is an operational starter, not an auton
 
 ## Architecture
 
+The core event flow:
+
+```mermaid
+flowchart LR
+    A[Webhook] --> B[Gateway]
+    B --> C[(Outbox)]
+    C -->|Publisher relay| D[Kafka]
+    D -->|Worker intake| E[(Inbox)]
+    E -->|Worker job runner| F[Workflow graph]
+    F <--> G[(Checkpoints)]
+    F -->|Domain events| C
+```
+
+The full architecture, including integrations:
+
 ```mermaid
 flowchart LR
   Sources["Jira Automation / Slack adapter / SIEM"] -->|Signed or authenticated HTTP| Gateway["FastAPI Event Gateway"]

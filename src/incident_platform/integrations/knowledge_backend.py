@@ -1,3 +1,11 @@
+"""Convert MCP knowledge search results into workflow evidence.
+
+Route knowledge queries through the gateway and delegate observational queries and
+verification to the inner backend. Label snippets as reference data with provenance
+and adapter-assigned trust; empty results are untrusted. Translate transport failures
+for workflow retries. This adapter retrieves documents and does not index them.
+"""
+
 from uuid import NAMESPACE_URL, uuid5
 
 from incident_platform.models import Evidence

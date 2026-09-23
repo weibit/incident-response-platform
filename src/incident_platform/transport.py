@@ -1,3 +1,11 @@
+"""Kafka topic definitions and PostgreSQL outbox publication.
+
+Lock an unsent outbox row, publish its envelope with incident_id as the Kafka key,
+and record sent_at after acknowledgment. Row locks coordinate concurrent relays.
+A crash between publication and database commit can cause duplicates, so consumers
+must deduplicate event IDs. Inbox processing belongs to worker/main.py.
+"""
+
 import asyncio
 import json
 

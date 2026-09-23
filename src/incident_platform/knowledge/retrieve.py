@@ -1,3 +1,11 @@
+"""Read-only retrieval and bounded snippet assembly for indexed knowledge.
+
+Filter PostgreSQL searches by service and optional corpus kind. Combine lexical and
+optional vector rankings with reciprocal rank fusion, then cap snippet counts and
+text size. Results are reference material; retrieval does not establish an RCA or
+modify the indexed corpus.
+"""
+
 import re
 from dataclasses import dataclass
 

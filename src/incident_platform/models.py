@@ -1,4 +1,10 @@
-"""models.py defines data models, not LLM models."""
+"""Data contracts for alerts, event envelopes, evidence, plans, and approvals.
+
+Pydantic models validate inputs and structured analyst outputs. IncidentState describes
+accumulated graph state as a TypedDict; it does not itself validate values at runtime.
+These are application data models, not LLM models. LLM integration lives in
+integrations/llm.py, and authorization of recognized actions belongs to workflow policy.
+"""
 
 from datetime import UTC, datetime
 from enum import StrEnum

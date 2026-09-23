@@ -1,3 +1,12 @@
+"""Define and compile the incident-response LangGraph workflow.
+
+Nodes normalize alerts, gather evidence, triage, investigate, validate RCA, plan,
+enforce policy, request approval, execute, and verify outcomes. Conditional edges
+bound investigation loops and route to resolution, denial, or manual review.
+The worker invokes this shared definition with separate state/checkpoints per incident.
+Node updates advance the workflow directly; Kafka carries emitted domain events.
+"""
+
 import hashlib
 import json
 

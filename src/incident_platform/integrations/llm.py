@@ -1,3 +1,11 @@
+"""Analyst interface for triage, investigation, and mitigation planning.
+
+Mock mode returns deterministic simulated results. Live mode uses LangChain structured
+outputs and role-specific model aliases through the configured LLM gateway. Outputs
+propose conclusions and actions; graph validation and deterministic policy control
+whether they can lead to execution.
+"""
+
 import json
 
 from langchain.chat_models import init_chat_model

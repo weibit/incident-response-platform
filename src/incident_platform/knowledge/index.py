@@ -1,3 +1,10 @@
+"""CLI indexing path for knowledge sources declared in corpus.yaml.
+
+Load documents through source loaders, group them by kind, and persist documents and
+chunks in PostgreSQL. Helpers support pruning withdrawn documents and embedding
+updates. This maintenance path writes data and is separate from read-only MCP search.
+"""
+
 import asyncio
 import hashlib
 import sys

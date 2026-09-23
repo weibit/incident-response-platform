@@ -1,3 +1,10 @@
+"""Initialize application tables, LangGraph checkpoint tables, and Kafka topics.
+
+Run before gateway and worker services to prepare shared infrastructure. Existing
+topics are tolerated. The local defaults of three partitions and one broker replica
+do not set the number of worker processes.
+"""
+
 import asyncio
 
 from aiokafka.admin import AIOKafkaAdminClient, NewTopic

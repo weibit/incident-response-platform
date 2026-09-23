@@ -1,3 +1,11 @@
+"""Deterministic RCA validation and mitigation authorization.
+
+Check evidence provenance, freshness, corroboration, and mock/live constraints.
+Classify plans using server-side action and target rules. Before execution, recheck
+policy and any required unexpired approval against the exact stored plan. Mock mode
+simulates execution; live mutation fails closed until an adapter is implemented.
+"""
+
 from datetime import UTC, datetime
 
 from incident_platform.models import RCA, Action, Evidence, Plan

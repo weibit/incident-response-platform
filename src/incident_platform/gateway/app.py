@@ -1,3 +1,10 @@
+"""FastAPI entry point for incident webhooks, approval callbacks, and status reads.
+
+Authenticate and validate requests, then use Store to persist alerts or approval
+decisions before acknowledgment. The lifespan manages the database pool and outbox
+relay. Investigation runs in separate workers; acceptance does not mean completion.
+"""
+
 import asyncio
 import json
 from contextlib import asynccontextmanager
