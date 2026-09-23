@@ -135,8 +135,10 @@ The mask redacts exact occurrences of every `SecretStr` field on the `Settings` 
 `Authorization: Bearer ...` shaped substrings. The fields are derived from the model rather
 than enumerated, so a credential added later cannot silently reach the trace store; a
 regression test pins that by subclassing `Settings` with an extra credential. Today the
-derived set is exactly the seven existing credentials, so this is behaviour-preserving. It walks nested dicts and lists and returns
-JSON-serialisable data.
+derived set is exactly the seven existing credentials, so this is behaviour-preserving.
+
+It walks nested dicts and lists, converting tuples to lists, and leaves other leaf types
+untouched; the SDK serialises whatever it returns.
 
 It does **not** attempt entropy scoring or PII regexes. Those false-positive on log lines,
 stack traces and ticket text, and no test can pin their behaviour. Evidence bodies pass
