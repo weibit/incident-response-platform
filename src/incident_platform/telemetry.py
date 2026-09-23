@@ -1,8 +1,9 @@
 """Configure structured JSON logs and optional Langfuse tracing.
 
-graph_config() sets incident_id as the LangGraph thread_id and adds correlation
-metadata, tags, and optional callbacks. The thread ID selects checkpoint history;
-this module does not persist workflow state.
+graph_config() sets incident_id as the LangGraph thread_id, derives this delivered event's
+trace id, and adds correlation metadata, tags and optional callbacks. One trace covers one
+delivered event; traces for an incident are grouped by langfuse_session_id. The thread ID
+selects checkpoint history; this module does not persist workflow state.
 """
 
 import logging
@@ -10,6 +11,7 @@ import re
 
 import structlog
 from langfuse import Langfuse
+from langfuse.langchain import CallbackHandler
 from pydantic import SecretStr
 
 log = structlog.get_logger()
@@ -101,18 +103,24 @@ def init_tracing(cfg):
     return client
 
 
-def graph_config(incident_id: str, correlation_id: str, enabled: bool) -> dict:
+def graph_config(incident_id: str, correlation_id: str, event_id: str, enabled: bool) -> dict:
+    trace_id = trace_id_for(incident_id, event_id)
     callbacks = []
     if enabled:
-        from langfuse.langchain import CallbackHandler
-
-        callbacks.append(CallbackHandler())
+        try:
+            callbacks.append(
+                CallbackHandler(trace_context={"trace_id": trace_id}, update_trace=True)
+            )
+        except Exception as exc:
+            log.warning("langfuse.handler_unavailable", error_type=type(exc).__name__)
     return {
         "configurable": {"thread_id": incident_id},
         "callbacks": callbacks,
         "metadata": {
             "incident_id": incident_id,
             "correlation_id": correlation_id,
+            "event_id": event_id,
+            "trace_id": trace_id,
             "langfuse_session_id": incident_id,
         },
         "tags": ["incident-response"],

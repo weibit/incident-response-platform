@@ -23,7 +23,7 @@ from incident_platform.integrations.tools import MockEvidenceBackend, Unconfigur
 from incident_platform.knowledge import mcp_client
 from incident_platform.models import Envelope
 from incident_platform.storage import Store
-from incident_platform.telemetry import configure_logging, graph_config
+from incident_platform.telemetry import configure_logging, graph_config, init_tracing
 from incident_platform.transport import relay_forever
 from incident_platform.workflow.graph import build_graph
 
@@ -85,7 +85,7 @@ async def ingest(store, cfg):
 
 async def process_event(store, graph, cfg, event: Envelope):
     incident_id, correlation_id = str(event.incident_id), str(event.correlation_id)
-    config = graph_config(incident_id, correlation_id, cfg.langfuse_enabled)
+    config = graph_config(incident_id, correlation_id, str(event.event_id), cfg.langfuse_enabled)
     snapshot = await graph.aget_state(config)
     interrupted = any(task.interrupts for task in snapshot.tasks)
     if event.event_type == "incident.approval":
@@ -166,6 +166,7 @@ async def run_jobs(store, graph, cfg):
 async def main():
     configure_logging()
     cfg = settings()
+    init_tracing(cfg)
     store = Store(cfg.database_url)
     await store.open()
     try:

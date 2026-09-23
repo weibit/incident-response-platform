@@ -5,7 +5,13 @@ from langfuse import get_client
 from langfuse._client.resource_manager import LangfuseResourceManager
 from pydantic import SecretStr
 
-from incident_platform.telemetry import REDACTED, build_mask, init_tracing, trace_id_for
+from incident_platform.telemetry import (
+    REDACTED,
+    build_mask,
+    graph_config,
+    init_tracing,
+    trace_id_for,
+)
 
 
 def test_trace_id_is_stable_for_the_same_event():
@@ -125,3 +131,38 @@ def test_get_client_returns_a_masked_client_after_init(cfg, monkeypatch):
         assert get_client()._mask(data=f"leak {secret}") == "leak [redacted]"
     finally:
         LangfuseResourceManager.reset()
+
+
+def test_graph_config_has_no_callbacks_when_disabled():
+    config = graph_config("inc-1", "corr-1", "evt-1", False)
+    assert config["callbacks"] == []
+    assert config["configurable"]["thread_id"] == "inc-1"
+    assert config["metadata"]["langfuse_session_id"] == "inc-1"
+    assert config["metadata"]["trace_id"] == trace_id_for("inc-1", "evt-1")
+
+
+def test_graph_config_binds_the_handler_to_the_derived_trace(monkeypatch):
+    built = {}
+
+    class FakeHandler:
+        def __init__(self, *, trace_context, update_trace):
+            built["trace_context"] = trace_context
+            built["update_trace"] = update_trace
+
+    monkeypatch.setattr("incident_platform.telemetry.CallbackHandler", FakeHandler)
+    config = graph_config("inc-1", "corr-1", "evt-1", True)
+    assert len(config["callbacks"]) == 1
+    assert built["trace_context"] == {"trace_id": trace_id_for("inc-1", "evt-1")}
+    # Promotes graph input/output to trace level, which trace-based dataset runs require.
+    assert built["update_trace"] is True
+
+
+def test_graph_config_degrades_when_the_handler_cannot_be_built(monkeypatch):
+    def explode(**_):
+        raise RuntimeError("langfuse unavailable")
+
+    monkeypatch.setattr("incident_platform.telemetry.CallbackHandler", explode)
+    # Tracing is never a reason an incident is not processed.
+    config = graph_config("inc-1", "corr-1", "evt-1", True)
+    assert config["callbacks"] == []
+    assert config["metadata"]["incident_id"] == "inc-1"
