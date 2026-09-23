@@ -5,7 +5,7 @@ from langfuse import get_client
 from langfuse._client.resource_manager import LangfuseResourceManager
 from pydantic import SecretStr
 
-from incident_platform.telemetry import build_mask, init_tracing, trace_id_for
+from incident_platform.telemetry import REDACTED, build_mask, init_tracing, trace_id_for
 
 
 def test_trace_id_is_stable_for_the_same_event():
@@ -95,7 +95,9 @@ def test_init_tracing_passes_a_mask(cfg, monkeypatch):
         lambda **kwargs: built.append(FakeClient(**kwargs)) or built[-1],
     )
     client = init_tracing(cfg.model_copy(update={"langfuse_enabled": True}))
-    assert callable(client.kwargs["mask"])
+    # Callability alone would be satisfied by any lambda; assert it is the real mask.
+    secret = cfg.jira_webhook_token.get_secret_value()
+    assert client.kwargs["mask"](data=f"x {secret} y") == f"x {REDACTED} y"
     assert client.checked is True
 
 
