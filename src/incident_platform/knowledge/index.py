@@ -72,13 +72,18 @@ async def prune_missing(pool, documents: list[Document], kind: str) -> int:
     return result.rowcount
 
 
-def load_corpus(manifest: Path = MANIFEST) -> list[Document]:
-    """Every document declared in the manifest, across all sources.
+def by_kind(manifest: Path = MANIFEST) -> dict[str, list[Document]]:
+    """Documents grouped by the kind their source declared.
 
-    Duplicate ids are rejected across the whole corpus, not per source: two sources that
-    both produce `checkout` would otherwise overwrite each other's chunks row by row.
+    The only way to read the corpus. A flat list across kinds invites a caller to ingest
+    everything under one kind, which is how a document lands in the wrong corpus and is
+    retrieved as the wrong sort of evidence.
+
+    Duplicate ids are rejected across the whole corpus rather than per source, because
+    documents share one table: two sources both producing `checkout` would overwrite each
+    other's chunks row by row.
     """
-    documents: list[Document] = []
+    grouped: dict[str, list[Document]] = {}
     seen: dict[str, str] = {}
     for source in load_manifest(manifest):
         for document in load_source(source):
@@ -88,15 +93,7 @@ def load_corpus(manifest: Path = MANIFEST) -> list[Document]:
                     f"and {seen[document.doc_id]}"
                 )
             seen[document.doc_id] = document.source
-            documents.append(document)
-    return documents
-
-
-def by_kind(manifest: Path = MANIFEST) -> dict[str, list[Document]]:
-    """Documents grouped by the kind their source declared."""
-    grouped: dict[str, list[Document]] = {}
-    for source in load_manifest(manifest):
-        grouped.setdefault(source.kind, []).extend(load_source(source))
+            grouped.setdefault(source.kind, []).append(document)
     return grouped
 
 

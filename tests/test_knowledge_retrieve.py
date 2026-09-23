@@ -286,9 +286,9 @@ async def test_reindexing_the_existing_corpus_keeps_every_chunk_id(pool):
     # The proof that generalising ingestion did not disturb replay stability. Evidence ids
     # hash the chunk ids they cite, so a churned id silently invalidates a checkpointed
     # citation.
-    from incident_platform.knowledge.index import load_corpus
+    from incident_platform.knowledge.index import by_kind
 
-    await ingest_documents(pool, load_corpus(), kind="runbook")
+    await ingest_documents(pool, by_kind()["runbook"], kind="runbook")
     async with pool.connection() as conn:
         before = await (
             await conn.execute(
@@ -296,7 +296,7 @@ async def test_reindexing_the_existing_corpus_keeps_every_chunk_id(pool):
                 "USING(doc_id) WHERE d.kind='runbook' ORDER BY chunk_id"
             )
         ).fetchall()
-    await ingest_documents(pool, load_corpus(), kind="runbook")
+    await ingest_documents(pool, by_kind()["runbook"], kind="runbook")
     async with pool.connection() as conn:
         after = await (
             await conn.execute(
