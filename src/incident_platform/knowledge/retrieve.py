@@ -52,7 +52,7 @@ def _tsquery(query: str) -> str:
 LEXICAL_SQL = """
 SELECT c.chunk_id, c.doc_id, d.title, c.heading, c.body, d.source
 FROM knowledge_chunk c JOIN knowledge_document d USING(doc_id)
-WHERE d.kind = %(kind)s
+WHERE (%(kind)s::text IS NULL OR d.kind = %(kind)s)
   AND (d.service IS NULL OR d.service = %(service)s)
   AND c.tsv @@ to_tsquery('english', %(tsq)s)
 ORDER BY ts_rank_cd(c.tsv, to_tsquery('english', %(tsq)s)) DESC, c.chunk_id
@@ -87,7 +87,7 @@ def _cap(snippets: list[Snippet]) -> list[Snippet]:
 DENSE_SQL = """
 SELECT c.chunk_id
 FROM knowledge_chunk c JOIN knowledge_document d USING(doc_id)
-WHERE d.kind = %(kind)s
+WHERE (%(kind)s::text IS NULL OR d.kind = %(kind)s)
   AND (d.service IS NULL OR d.service = %(service)s)
   AND c.embedding IS NOT NULL
 ORDER BY c.embedding <=> %(vector)s, c.chunk_id
@@ -95,7 +95,7 @@ LIMIT %(limit)s
 """
 
 
-async def dense_ids(pool, embedder, kind: str, service: str, query: str) -> list[str]:
+async def dense_ids(pool, embedder, kind: str | None, service: str, query: str) -> list[str]:
     """Dense candidate ids, or an empty list when no provider is configured."""
     if embedder is None:
         return []
@@ -109,7 +109,7 @@ async def dense_ids(pool, embedder, kind: str, service: str, query: str) -> list
 
 
 async def search(
-    pool, kind: str, service: str, query: str, limit: int = MAX_SNIPPETS, embedder=None
+    pool, kind: str | None, service: str, query: str, limit: int = MAX_SNIPPETS, embedder=None
 ) -> list[Snippet]:
     """Hybrid search. Lexical always; dense only when a provider is configured.
 
