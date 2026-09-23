@@ -1,5 +1,8 @@
+import pytest
 from langchain.chat_models import init_chat_model
+from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.runnables import RunnableLambda
+from langchain_openai.chat_models.base import BaseChatOpenAI
 
 from incident_platform.config import Settings
 from incident_platform.integrations.llm import Analyst, _structured_model
@@ -114,3 +117,30 @@ async def test_structured_still_returns_the_parsed_result(monkeypatch):
     analyst = Analyst(_live(llm_model="shared-alias"))
     result = await analyst.structured("triage", Triage, "Assess", TRACED_STATE)
     assert result.severity == "high"
+
+
+class _Stop(Exception):
+    """Ends the call once the payload is captured, so no request is attempted."""
+
+
+async def test_trace_id_reaches_the_outgoing_request_body(monkeypatch):
+    # kwargs on the runnable are one level short of the wire, and the wire is where the
+    # original bug lived. This drives the real ainvoke path and reads the payload the HTTP
+    # client would have sent.
+    captured = {}
+    original = BaseChatOpenAI._get_request_payload
+
+    def capture(self, input_, *, stop=None, **kwargs):
+        captured.update(original(self, input_, stop=stop, **kwargs))
+        raise _Stop
+
+    monkeypatch.setattr(BaseChatOpenAI, "_get_request_payload", capture)
+    chain = ChatPromptTemplate.from_messages([("human", "{q}")]) | _structured_model(
+        _real_model(), Triage, TRACED_STATE
+    )
+    with pytest.raises(_Stop):
+        await chain.ainvoke({"q": "hi"})
+    assert captured["extra_body"] == {
+        "metadata": {"existing_trace_id": trace_id_for("inc-1", "evt-1")}
+    }
+    assert "response_format" in captured
