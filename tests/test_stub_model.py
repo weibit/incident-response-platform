@@ -92,3 +92,92 @@ def test_health_endpoint_reports_ok():
 
 def test_recorded_is_importable_for_assertions():
     assert isinstance(RECORDED, list)
+
+
+def test_json_schema_mode_returns_parsable_content():
+    # langchain-openai defaults with_structured_output to method="json_schema", which
+    # sends response_format and expects JSON content rather than a tool call.
+    client = TestClient(app)
+    payload = client.post(
+        "/v1/chat/completions",
+        json={
+            "model": "stub-plan",
+            "messages": [],
+            "response_format": {
+                "type": "json_schema",
+                "json_schema": {"name": "Triage", "schema": TRIAGE_TOOL["function"]["parameters"]},
+            },
+        },
+    ).json()
+    message = payload["choices"][0]["message"]
+    assert message.get("tool_calls") is None
+    arguments = json.loads(message["content"])
+    assert arguments["severity"] == "critical"
+    assert arguments["investigate"] is True
+
+
+def test_json_schema_mode_is_also_recorded():
+    client = TestClient(app)
+    client.delete("/_calls")
+    client.post(
+        "/v1/chat/completions",
+        json={
+            "model": "stub-rca",
+            "messages": [],
+            "response_format": {
+                "type": "json_schema",
+                "json_schema": {"name": "Triage", "schema": TRIAGE_TOOL["function"]["parameters"]},
+            },
+        },
+    )
+    assert client.get("/_calls").json() == ["stub-rca"]
+
+
+def test_an_optional_field_becomes_null_not_a_made_up_value():
+    # Strict json_schema mode marks every property required and expresses optionality as a
+    # null branch. Inventing a value there fails validation against a Literal or a nested
+    # model, which is exactly how the investigate role broke before this.
+    client = TestClient(app)
+    schema = {
+        "type": "object",
+        "properties": {
+            "hypothesis": {"type": "string"},
+            "tool": {"anyOf": [{"enum": ["logs", "metrics"]}, {"type": "null"}]},
+            "conclusion": {"anyOf": [{"type": "object", "properties": {}}, {"type": "null"}]},
+        },
+        "required": ["hypothesis", "tool", "conclusion"],
+    }
+    payload = client.post(
+        "/v1/chat/completions",
+        json={
+            "model": "stub-rca",
+            "messages": [],
+            "response_format": {"type": "json_schema", "json_schema": {"schema": schema}},
+        },
+    ).json()
+    arguments = json.loads(payload["choices"][0]["message"]["content"])
+    assert arguments["hypothesis"] == "stub"
+    assert arguments["tool"] is None
+    assert arguments["conclusion"] is None
+
+
+def test_an_enum_behind_a_ref_is_resolved():
+    # Pydantic hoists nested enums and models into $defs and references them. Without
+    # resolution the stub returns "stub" for an enum field, which fails validation - how
+    # the plan role broke before this.
+    client = TestClient(app)
+    schema = {
+        "type": "object",
+        "$defs": {"Action": {"enum": ["observe", "rollback_deployment"]}},
+        "properties": {"action": {"$ref": "#/$defs/Action"}},
+        "required": ["action"],
+    }
+    payload = client.post(
+        "/v1/chat/completions",
+        json={
+            "model": "stub-plan",
+            "messages": [],
+            "response_format": {"type": "json_schema", "json_schema": {"schema": schema}},
+        },
+    ).json()
+    assert json.loads(payload["choices"][0]["message"]["content"])["action"] == "observe"
