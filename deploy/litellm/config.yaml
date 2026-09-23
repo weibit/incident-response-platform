@@ -31,6 +31,14 @@ mcp_servers:
   runbooks:
     url: http://runbooks:8080/mcp
     transport: http
+    # The gateway holds the upstream credential itself. It connects to runbooks at its own
+    # startup to list tools, when no caller request exists, so a forwarded per-caller header
+    # cannot work: verified as a 401 at startup before this was added. auth_type turns
+    # authentication_token into `Authorization: Bearer ...` (mcp_server_manager.py:878).
+    # os.environ/ resolves here because the proxy substitutes it across the whole config
+    # before MCP servers load (proxy_server.py:3969), recursing into nested dicts.
+    auth_type: bearer_token
+    authentication_token: os.environ/KNOWLEDGE_MCP_TOKEN
     available_on_public_internet: false
     # Second enforcement layer for the read-only guarantee. The server registers only these
     # two tools; this makes that independent of the server's own registration, and LiteLLM

@@ -53,4 +53,5 @@ def test_gateway_key_joins_the_distinct_credential_check():
 
 
 def test_knowledge_url_defaults_to_the_gateway():
-    assert Settings(**BASE).knowledge_mcp_url == "http://litellm:4000/mcp"
+    # Trailing slash matters: /mcp 307-redirects and the MCP SDK will not follow it.
+    assert Settings(**BASE).knowledge_mcp_url == "http://litellm:4000/mcp/"

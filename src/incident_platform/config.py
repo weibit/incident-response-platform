@@ -31,7 +31,9 @@ class Settings(BaseSettings):
     litellm_api_key: SecretStr = SecretStr("")
     langfuse_enabled: bool = False
     knowledge_enabled: bool = False
-    knowledge_mcp_url: str = "http://litellm:4000/mcp"
+    # Trailing slash is required: LiteLLM answers /mcp with a 307 to /mcp/, and the MCP
+    # SDK does not follow it on POST, so the initialize handshake fails without it.
+    knowledge_mcp_url: str = "http://litellm:4000/mcp/"
     knowledge_mcp_token: SecretStr = SecretStr("")
     # The MCP SDK enables DNS-rebinding protection by default and rejects any Host
     # header not listed here. The worker reaches the server by its Compose name.
