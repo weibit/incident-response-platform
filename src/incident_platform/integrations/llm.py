@@ -49,6 +49,19 @@ def _trace_metadata(state):
     return {"metadata": {"existing_trace_id": trace_id_for(incident_id, event_id)}}
 
 
+def _structured_model(model, schema, state):
+    """Attach structured output and this invocation's trace id in one step.
+
+    extra_body must pass through with_structured_output. Binding it first and calling
+    with_structured_output on the binding silently drops it: RunnableBinding delegates
+    the attribute to the inner unbound model, discarding its kwargs.
+    """
+    extra_body = _trace_metadata(state)
+    if not extra_body:
+        return model.with_structured_output(schema)
+    return model.with_structured_output(schema, extra_body=extra_body)
+
+
 class Analyst:
     def __init__(self, cfg):
         self.cfg = cfg
@@ -66,13 +79,7 @@ class Analyst:
         prompt = ChatPromptTemplate.from_messages(
             [("system", SYSTEM), ("human", "Task: {task}\nIncident data: {data}")]
         )
-        model = self.models[role]
-        extra_body = _trace_metadata(state)
-        if extra_body:
-            # Lands in the request body, so the gateway attaches its generation, with the
-            # cost it actually billed, to the same trace the worker is writing.
-            model = model.bind(extra_body=extra_body)
-        chain = prompt | model.with_structured_output(schema)
+        chain = prompt | _structured_model(self.models[role], schema, state)
         return await chain.ainvoke({"task": task, "data": json.dumps(state)})
 
     async def triage(self, state):
