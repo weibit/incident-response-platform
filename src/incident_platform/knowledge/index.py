@@ -7,9 +7,11 @@ from psycopg.rows import dict_row
 from psycopg_pool import AsyncConnectionPool
 
 from incident_platform.config import settings
-from incident_platform.knowledge.chunker import Chunk, Document, chunk_markdown
+from incident_platform.knowledge.chunker import Chunk, Document
+from incident_platform.knowledge.corpus import load_manifest
+from incident_platform.knowledge.loaders import load_source
 
-CORPUS = Path("docs/runbooks")
+MANIFEST = Path("corpus.yaml")
 
 
 async def ingest_documents(pool, documents: list[Document], kind: str) -> int:
@@ -70,19 +72,32 @@ async def prune_missing(pool, documents: list[Document], kind: str) -> int:
     return result.rowcount
 
 
-def load_corpus(directory: Path = CORPUS) -> list[Document]:
-    paths = sorted(directory.glob("*.md"))
-    if not paths:
-        raise FileNotFoundError(f"No runbooks found under {directory}")
-    documents = [chunk_markdown(path.read_text(), source=str(path)) for path in paths]
+def load_corpus(manifest: Path = MANIFEST) -> list[Document]:
+    """Every document declared in the manifest, across all sources.
+
+    Duplicate ids are rejected across the whole corpus, not per source: two sources that
+    both produce `checkout` would otherwise overwrite each other's chunks row by row.
+    """
+    documents: list[Document] = []
     seen: dict[str, str] = {}
-    for doc in documents:
-        if doc.doc_id in seen:
-            raise ValueError(
-                f"Duplicate runbook id {doc.doc_id!r} in {doc.source} and {seen[doc.doc_id]}"
-            )
-        seen[doc.doc_id] = doc.source
+    for source in load_manifest(manifest):
+        for document in load_source(source):
+            if document.doc_id in seen:
+                raise ValueError(
+                    f"Duplicate document id {document.doc_id!r} in {document.source} "
+                    f"and {seen[document.doc_id]}"
+                )
+            seen[document.doc_id] = document.source
+            documents.append(document)
     return documents
+
+
+def by_kind(manifest: Path = MANIFEST) -> dict[str, list[Document]]:
+    """Documents grouped by the kind their source declared."""
+    grouped: dict[str, list[Document]] = {}
+    for source in load_manifest(manifest):
+        grouped.setdefault(source.kind, []).extend(load_source(source))
+    return grouped
 
 
 async def ensure_vector_column(pool, dim: int) -> None:
@@ -179,15 +194,16 @@ async def main() -> None:
     try:
         from incident_platform.knowledge.embeddings import provider
 
-        corpus = load_corpus()
-        count = await ingest_documents(pool, corpus, kind="runbook")
-        pruned = await prune_missing(pool, corpus, kind="runbook")
+        totals = []
+        for kind, documents in by_kind().items():
+            count = await ingest_documents(pool, documents, kind=kind)
+            pruned = await prune_missing(pool, documents, kind=kind)
+            totals.append(f"{kind}: {count} chunks, pruned {pruned}")
         incidents = await ingest_resolved_incidents(pool)
         # After the incident ingest, so chunks from both corpora are embedded in one run.
         embedded = await embed_corpus(pool, provider(cfg))
         print(
-            f"indexed {count} runbook chunks, pruned {pruned} documents, "
-            f"{incidents} incident chunks, embedded {embedded}",
+            f"indexed {'; '.join(totals)}; {incidents} incident chunks, embedded {embedded}",
             file=sys.stderr,
         )
     finally:

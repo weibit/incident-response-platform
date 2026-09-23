@@ -280,3 +280,29 @@ async def test_similar_incident_search_finds_the_rca(pool):
     await ingest_resolved_incidents(pool)
     snippets = await search(pool, kind="incident", service="checkout", query="timeout regression")
     assert any("regression" in s.body for s in snippets)
+
+
+async def test_reindexing_the_existing_corpus_keeps_every_chunk_id(pool):
+    # The proof that generalising ingestion did not disturb replay stability. Evidence ids
+    # hash the chunk ids they cite, so a churned id silently invalidates a checkpointed
+    # citation.
+    from incident_platform.knowledge.index import load_corpus
+
+    await ingest_documents(pool, load_corpus(), kind="runbook")
+    async with pool.connection() as conn:
+        before = await (
+            await conn.execute(
+                "SELECT chunk_id FROM knowledge_chunk c JOIN knowledge_document d "
+                "USING(doc_id) WHERE d.kind='runbook' ORDER BY chunk_id"
+            )
+        ).fetchall()
+    await ingest_documents(pool, load_corpus(), kind="runbook")
+    async with pool.connection() as conn:
+        after = await (
+            await conn.execute(
+                "SELECT chunk_id FROM knowledge_chunk c JOIN knowledge_document d "
+                "USING(doc_id) WHERE d.kind='runbook' ORDER BY chunk_id"
+            )
+        ).fetchall()
+    assert [r["chunk_id"] for r in before] == [r["chunk_id"] for r in after]
+    assert len(before) == 10
