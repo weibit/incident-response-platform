@@ -101,17 +101,17 @@ attributes are applied from metadata independently of that flag, so the existing
 `Analyst.structured` derives the same trace identifier from `state["incident_id"]` and
 `state["input_event_id"]` via `telemetry.trace_id_for`, and binds it per call:
 
-    model.bind(
-        extra_body={"metadata": {"existing_trace_id": trace_id}}
-    ).with_structured_output(schema)
+    model.with_structured_output(schema, extra_body={"metadata": {"existing_trace_id": trace_id}})
 
 The key is written provisionally as `existing_trace_id`. Task 1 confirms the name the proxy
 actually honours and the spec is corrected to match; nothing else in this design depends on
 which name it turns out to be.
 
-`extra_body` is a model field that `langchain_openai` merges into the request payload as
-`{**self._default_params, **kwargs}`, and `_model()` sets no `extra_body` of its own, so a
-bound value lands in the request body with nothing to clobber. `Analyst.structured` keeps its
+`extra_body` must pass *through* `with_structured_output`, which forwards `**kwargs` to
+`bind_tools`. Binding it first and calling `with_structured_output` on the binding silently
+drops it: `RunnableBinding` delegates the attribute to the inner unbound model and discards
+its kwargs, so the trace id never reaches the gateway. This was found in implementation after
+an earlier draft of this spec prescribed the binding-first form. `Analyst.structured` keeps its
 current signature; no trace plumbing is threaded through the graph.
 
 `deploy/litellm/config.yaml` enables the Langfuse success callback so the proxy reports each

@@ -23,7 +23,8 @@ Do not re-litigate these; they were checked against this repo's `.venv` before t
 - If a mask function raises, the SDK substitutes `"<fully masked due to failed mask function>"` and logs. Masks fail closed.
 - `langfuse.langchain.CallbackHandler.__init__` accepts `trace_context: Optional[TraceContext]` and `update_trace: bool = False`. `TraceContext` is `{"trace_id": str, "parent_span_id": NotRequired[str]}`.
 - The handler applies `langfuse_session_id` / `langfuse_user_id` / `langfuse_tags` from config metadata at the root run **independently** of the `update_trace` flag.
-- `ChatOpenAI.bind(extra_body=...)` returns a `_ChatModelBinding` that **does** expose `with_structured_output`, and the bound value reaches the request payload as `extra_body` (`payload = {**self._default_params, **kwargs}`). Correct order: `model.bind(...).with_structured_output(schema)`.
+- **CORRECTED 2026-09-23.** An earlier version of this line claimed `model.bind(extra_body=...).with_structured_output(schema)` works. **It does not.** `RunnableBinding` has no `with_structured_output` of its own, so attribute lookup falls through `__getattr__` to the *inner, unbound* model and the kwargs are discarded; the final chain step carries only `response_format`. The trace id never reaches the gateway. The working form, verified to appear in the outgoing payload with structured output intact, is to pass it through: `model.with_structured_output(schema, extra_body=...)`, which forwards `**kwargs` to `bind_tools`.
+- A hand-written test double cannot catch that: doubles whose `bind()` returns `self` do not reproduce `RunnableBinding`'s attribute delegation, so they pass against broken code. Tests for this must compose a real model and assert on `.steps[0].kwargs`.
 
 ## Before every commit
 
