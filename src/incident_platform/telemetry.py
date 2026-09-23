@@ -12,6 +12,8 @@ import structlog
 from langfuse import Langfuse
 from pydantic import SecretStr
 
+log = structlog.get_logger()
+
 
 def configure_logging():
     logging.basicConfig(level=logging.INFO, format="%(message)s")
@@ -78,6 +80,24 @@ def build_mask(cfg):
         return walk(data)
 
     return mask
+
+
+def init_tracing(cfg):
+    """Construct the one Langfuse client, with masking configured.
+
+    Returns None when tracing is disabled. The SDK disables itself rather than raising
+    when credentials are absent, so a mistyped key degrades export instead of refusing
+    startup: core correctness must not depend on trace delivery.
+    """
+    if not cfg.langfuse_enabled:
+        return None
+    client = Langfuse(mask=build_mask(cfg))
+    try:
+        if not client.auth_check():
+            log.warning("langfuse.unauthenticated")
+    except Exception as exc:
+        log.warning("langfuse.auth_check_failed", error_type=type(exc).__name__)
+    return client
 
 
 def graph_config(incident_id: str, correlation_id: str, enabled: bool) -> dict:

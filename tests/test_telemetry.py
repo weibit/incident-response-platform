@@ -1,8 +1,9 @@
 import json
 
+import pytest
 from pydantic import SecretStr
 
-from incident_platform.telemetry import build_mask, trace_id_for
+from incident_platform.telemetry import build_mask, init_tracing, trace_id_for
 
 
 def test_trace_id_is_stable_for_the_same_event():
@@ -65,3 +66,42 @@ def test_mask_covers_a_secret_field_added_later(cfg):
 
     extended = Extended(**cfg.model_dump(), _env_file=None)
     assert "added-later-secret" not in build_mask(extended)(data="x added-later-secret y")
+
+
+class FakeClient:
+    def __init__(self, **kwargs):
+        self.kwargs = kwargs
+        self.checked = False
+
+    def auth_check(self):
+        self.checked = True
+        return True
+
+
+def test_init_tracing_returns_none_when_disabled(cfg, monkeypatch):
+    monkeypatch.setattr(
+        "incident_platform.telemetry.Langfuse",
+        lambda **kwargs: pytest.fail("client must not be constructed when disabled"),
+    )
+    assert init_tracing(cfg) is None
+
+
+def test_init_tracing_passes_a_mask(cfg, monkeypatch):
+    built = []
+    monkeypatch.setattr(
+        "incident_platform.telemetry.Langfuse",
+        lambda **kwargs: built.append(FakeClient(**kwargs)) or built[-1],
+    )
+    client = init_tracing(cfg.model_copy(update={"langfuse_enabled": True}))
+    assert callable(client.kwargs["mask"])
+    assert client.checked is True
+
+
+def test_init_tracing_survives_a_failing_auth_check(cfg, monkeypatch):
+    class Unreachable(FakeClient):
+        def auth_check(self):
+            raise ConnectionError("collector unreachable")
+
+    monkeypatch.setattr("incident_platform.telemetry.Langfuse", Unreachable)
+    # Tracing is never a reason the worker fails to start.
+    assert init_tracing(cfg.model_copy(update={"langfuse_enabled": True})) is not None
