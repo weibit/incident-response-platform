@@ -1,3 +1,5 @@
+"""models.py defines data models, not LLM models."""
+
 from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Any, Literal, TypedDict
@@ -61,11 +63,12 @@ class InvestigationStep(StrictModel):
             "deployments",
             "config_diffs",
             "topology",
-            "runbooks",
-            "similar_incidents",
+            "knowledge",
         ]
         | None
     ) = None
+    # Which corpus to search. Only meaningful for the knowledge tool; ignored otherwise.
+    kind: str = Field(default="", max_length=64)
     query: str = Field(default="", max_length=1000)
     conclusion: RCA | None = None
 

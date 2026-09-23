@@ -49,7 +49,10 @@ def build_graph(cfg, store, analyst, backend, checkpointer):
         }
         if step.tool:
             tools = read_tools(backend, state["incident"]["service"])
-            evidence = await tools[step.tool].ainvoke({"query": step.query})
+            payload = {"query": step.query}
+            if step.tool == "knowledge":
+                payload["kind"] = step.kind
+            evidence = await tools[step.tool].ainvoke(payload)
             update["evidence"] = [*state["evidence"], evidence]
         elif step.conclusion:
             update["rca"] = step.conclusion.model_dump()

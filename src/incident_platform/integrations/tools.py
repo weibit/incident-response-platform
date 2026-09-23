@@ -12,13 +12,12 @@ READ_TOOLS = (
     "deployments",
     "config_diffs",
     "topology",
-    "runbooks",
-    "similar_incidents",
+    "knowledge",
 )
 
 
 class EvidenceBackend(Protocol):
-    async def query(self, tool: str, service: str, query: str) -> Evidence: ...
+    async def query(self, tool: str, service: str, query: str, kind: str = "") -> Evidence: ...
     async def verify(self, service: str, execution: dict) -> bool: ...
 
 
@@ -36,7 +35,7 @@ class MutationBackend(Protocol):
 class MockEvidenceBackend:
     """Explicitly simulated observations; never connect to a real environment."""
 
-    async def query(self, tool, service, query):
+    async def query(self, tool, service, query, kind=""):
         observations = {
             "metrics": "Simulated: checkout error rate 12%, latency p95 1800ms after release v2.",
             "logs": "Simulated: upstream timeout errors began after release v2.",
@@ -44,8 +43,8 @@ class MockEvidenceBackend:
             "config_diffs": "Simulated: release v2 changed upstream timeout from 5s to 100ms.",
             "kubernetes": "Simulated: pods ready; no OOMKilled events.",
             "topology": "Simulated: checkout -> payments; owner commerce-oncall.",
-            "runbooks": "Simulated runbook: rollback v2 after approval; verify error rate <1%.",
-            "similar_incidents": "Simulated prior timeout regression resolved by rollback.",
+            "knowledge": f"Simulated {kind or 'knowledge'}: rollback v2 after approval; "
+            "verify error rate <1%.",
         }
         return Evidence(
             evidence_id=str(uuid5(NAMESPACE_URL, f"{service}:{tool}:{query}")),
@@ -60,23 +59,34 @@ class MockEvidenceBackend:
 
 
 class UnconfiguredEvidenceBackend:
-    async def query(self, tool, service, query):
+    async def query(self, tool, service, query, kind=""):
         raise NotImplementedError(f"Configure read-only {tool} adapter before live mode")
 
     async def verify(self, service, execution):
         raise NotImplementedError("Configure independent post-action SLO verification")
 
 
-def read_tools(backend: EvidenceBackend, service: str):
+def read_tools(backend: EvidenceBackend, service: str, kinds: tuple[str, ...] = ()):
     def make(name):
-        async def query(query: str) -> dict:
-            evidence = await backend.query(name, service, query)
-            return evidence.model_dump(mode="json")
+        if name == "knowledge":
 
-        return StructuredTool.from_function(
-            coroutine=query,
-            name=name,
-            description=f"Read-only {name} evidence for the scoped service, queried on demand.",
-        )
+            async def query(query: str, kind: str = "") -> dict:
+                evidence = await backend.query(name, service, query, kind)
+                return evidence.model_dump(mode="json")
+
+            available = ", ".join(kinds) if kinds else "any indexed corpus"
+            description = (
+                "Read-only retrieval over indexed documents for the scoped service. "
+                f"Available kinds: {available}. Procedure and precedent, not observation."
+            )
+        else:
+
+            async def query(query: str) -> dict:
+                evidence = await backend.query(name, service, query)
+                return evidence.model_dump(mode="json")
+
+            description = f"Read-only {name} evidence for the scoped service, queried on demand."
+
+        return StructuredTool.from_function(coroutine=query, name=name, description=description)
 
     return {name: make(name) for name in READ_TOOLS}
