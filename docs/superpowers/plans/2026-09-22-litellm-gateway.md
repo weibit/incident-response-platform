@@ -37,7 +37,7 @@ Nothing is written in this task. It exists because the previous plan in this rep
 
 **Files:** none modified.
 
-- [ ] **Step 1: Pin and pull the image**
+- [x] **Step 1: Pin and pull the image**
 
 ```bash
 docker pull ghcr.io/berriai/litellm:v1.90.2
@@ -46,7 +46,7 @@ docker run --rm ghcr.io/berriai/litellm:v1.90.2 --help 2>&1 | head -40
 
 Expected: the help text lists a `--config` flag and a `--port` flag. Record the exact version you pulled; use that same tag in Task 8. If `v1.90.2` no longer exists, pick the newest stable tag, record it, and continue.
 
-- [ ] **Step 2: Confirm the config keys against the image, not the docs**
+- [x] **Step 2: Confirm the config keys against the image, not the docs**
 
 ```bash
 docker run --rm ghcr.io/berriai/litellm:v1.90.2 \
@@ -62,11 +62,61 @@ Record which of these the installed version accepts in `config.yaml`: `model_lis
 
 **If `allowed_tools` is not supported on `mcp_servers` in this version, stop and report.** The design leans on it as the second enforcement layer for the read-only guarantee. Do not silently drop it.
 
-- [ ] **Step 3: Record the facts in the plan file**
+### Verified LiteLLM surface (recorded 2026-09-22)
+
+Evidence method: read the installed source inside the image (`litellm.proxy.proxy_server.ProxyConfig.load_config`/`get_config`, `litellm.proxy._experimental.mcp_server.mcp_server_manager.MCPServerManager.load_servers_from_config`, `litellm.types.router`, `litellm.types.mcp_server.mcp_server_manager.MCPServer`), then confirmed empirically by running the proxy against a trial `config.yaml` and inspecting `/v1/mcp/server` and `/health` on the live process. No claim below is from documentation.
+
+| Fact | Value |
+|---|---|
+| Image tag pulled | `ghcr.io/berriai/litellm:v1.90.2` (still current; no fallback needed) |
+| `litellm` package version inside image | `1.90.2` (via `importlib.metadata.version("litellm")`) |
+| Default port | `4000` — CLI `--port` default, and the image's own `CMD` is `["--port", "4000"]` (confirmed via `docker inspect`) |
+| Health endpoint (unauthenticated liveness) | `GET /health/liveliness` (alias `GET /health/liveness`) → returns `"I'm alive!"`. No `user_api_key_auth` dependency. Confirmed by curling a live trial container. |
+| Health endpoint (unauthenticated readiness) | `GET /health/readiness` → `{"status": "healthy", "db": "..."}`. No auth dependency. Confirmed live. |
+| Health endpoint (authenticated, pings configured models) | `GET /health` → requires `Authorization: Bearer <master_key>`; iterates `model_list` and attempts a real completion per deployment. Confirmed live (returned `unhealthy_endpoints` with a DNS-resolution error for the fake `api_base`, which proves it read `model_name`/`litellm_params.model/api_base/api_key` correctly). |
+| `model_list[].model_name` | **Supported.** `litellm.types.router.Deployment.model_name: str` (required). Confirmed live: appeared as `model_id`/model reference in `/health` output. |
+| `model_list[].litellm_params.model` | **Supported, required.** `litellm.types.router.LiteLLM_Params.model: str`. Read directly via `model["litellm_params"]["model"]` in `proxy_server.py` (`ProxyConfig.load_config`, "MODEL LIST" section). |
+| `model_list[].litellm_params.api_base` | **Supported.** `LiteLLMParamsTypedDict.api_base: Optional[str]`. Read via `model["litellm_params"].get("api_base", None)`. Confirmed live (the trial run's fake `api_base` value flowed through to the actual outbound HTTP request logged in `/health`). |
+| `model_list[].litellm_params.api_key` | **Supported.** `LiteLLMParamsTypedDict.api_key: Optional[str]`, `GenericLiteLLMParams`/`LiteLLM_Params` field. `os.environ/`-prefixed values are resolved via `get_secret`. |
+| `mcp_servers` **shape** | **Correction to this task's own wording above.** It is **not** a list of objects each carrying a `server_name` field. It is a **mapping (dict) keyed by server name**: `mcp_servers: {<server_name>: {url: ..., transport: ..., ...}}`. Confirmed by source (`for server_name, server_config in mcp_servers_config.items()` in `mcp_server_manager.py`) and live: a trial config with `mcp_servers.runbooks.{url,transport,available_on_public_internet,allowed_tools}` produced a server with `"server_name": "runbooks"` in `GET /v1/mcp/server`, with `server_name` taken from the dict key, not from a nested field. **Task 8 must write `deploy/litellm/config.yaml` using this mapping shape, not a list.** |
+| `mcp_servers.<name>.url` | **Supported.** `MCPServer.url: Optional[str]`, read via `server_config.get("url", None)`. Confirmed live: exact value round-tripped in `/v1/mcp/server` output and the proxy attempted a real connection to it. |
+| `mcp_servers.<name>.transport` | **Supported.** `MCPServer.transport: MCPTransportType`, read via `server_config.get("transport", MCPTransport.http)`. **Valid literal values are `sse`, `http`, `stdio`** (`litellm.types.mcp.MCPTransport`) — there is no `"streamable_http"` literal; the streamable-HTTP transport (which is what the `runbooks` server speaks) is configured with `transport: http`. Confirmed live: with `transport: http` the proxy's outbound client used `mcp.client.streamable_http` (visible in the connection-failure traceback against the unreachable trial `runbooks` host), i.e. it is genuinely the streamable-HTTP client, not plain HTTP. |
+| `mcp_servers.<name>.available_on_public_internet` | **Supported.** `MCPServer.available_on_public_internet: bool` (default `True`), read via `bool(server_config.get("available_on_public_internet", True))`. Confirmed live: set to `false` in the trial config, round-tripped as `"available_on_public_internet": false` in `/v1/mcp/server`. |
+| `mcp_servers.<name>.allowed_tools` | **Supported.** `MCPServer.allowed_tools: Optional[List[str]]`, read via `server_config.get("allowed_tools", None)`. **Confirmed live**, not just by source: the trial config set `allowed_tools: [search_runbooks, search_similar_incidents]` and `GET /v1/mcp/server` echoed back exactly `"allowed_tools": ["search_runbooks", "search_similar_incidents"]`. This satisfies the stop-and-report condition above — no need to stop, the second enforcement layer is available. |
+| `general_settings.master_key` | **Supported.** Read via `general_settings.get("master_key", get_secret("LITELLM_MASTER_KEY", None))` in `ProxyConfig.load_config`. Confirmed live: the trial `master_key: sk-fake-master-key` was required as a Bearer token for `/health`, `/mcp/tools/list`, `/v1/mcp/server`; unauthenticated calls to those were rejected. |
+| `general_settings.store_model_in_db` | **Supported.** Read via `general_settings.get("store_model_in_db", False)` in `ProxyConfig.load_config`, then written back into `general_settings["store_model_in_db"]`. Set to `false` in the trial config; the process started without attempting to sync models from a DB (readiness reported `"db": "Not connected"`, consistent with no DB configured and `store_model_in_db: false`). |
+
+Trial config used for the live checks (not committed elsewhere, reconstruct if re-verifying):
+
+```yaml
+model_list:
+  - model_name: test-model
+    litellm_params:
+      model: openai/gpt-4o-mini
+      api_base: https://example.invalid
+      api_key: sk-fake-test-key
+
+mcp_servers:
+  runbooks:
+    url: http://runbooks:9000/mcp
+    transport: http
+    available_on_public_internet: false
+    allowed_tools:
+      - search_runbooks
+      - search_similar_incidents
+
+general_settings:
+  master_key: sk-fake-master-key
+  store_model_in_db: false
+```
+
+Run with: `docker run -d -p 14000:4000 -v $PWD/trial_config.yaml:/app/config.yaml:ro ghcr.io/berriai/litellm:v1.90.2 --config /app/config.yaml --port 4000`, then `curl http://127.0.0.1:14000/health/liveliness`, `curl -H "Authorization: Bearer sk-fake-master-key" http://127.0.0.1:14000/v1/mcp/server`. Container was stopped and removed after verification; it never touched the project's own Compose stack (separate container name, separate host port).
+
+- [x] **Step 3: Record the facts in the plan file**
 
 Append a table to this task listing what you confirmed: image tag, config keys accepted, health endpoint path, default port. Later tasks read that table rather than re-deriving it.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add docs/superpowers/plans/2026-09-22-litellm-gateway.md
@@ -160,7 +210,9 @@ def test_a_number_stays_inside_a_bounded_schema():
         "/v1/chat/completions",
         json={"model": "m", "messages": [], "tools": [tool]},
     ).json()
-    arguments = json.loads(payload["choices"][0]["message"]["tool_calls"][0]["function"]["arguments"])
+    arguments = json.loads(
+        payload["choices"][0]["message"]["tool_calls"][0]["function"]["arguments"]
+    )
     assert 0 <= arguments["confidence"] <= 1
 
 
@@ -380,6 +432,7 @@ git commit -m "build: add langchain-openai for the gateway protocol"
 
 **Files:**
 - Modify: `src/incident_platform/config.py`
+- Modify: `tests/test_config_knowledge.py` (two call sites, see Step 5)
 - Test: `tests/test_config_gateway.py`
 
 - [ ] **Step 1: Write the failing test**
@@ -474,6 +527,9 @@ and change:
 Add the three resolving properties after the field declarations and before `validate_credentials`:
 
 ```python
+class Settings(BaseSettings):
+    # ... existing fields above ...
+
     @property
     def triage_model(self) -> str:
         return self.llm_model_triage or self.llm_model
@@ -491,12 +547,17 @@ In `validate_credentials`, add the gateway requirement directly after the existi
 `knowledge_enabled` block:
 
 ```python
+class Settings(BaseSettings):
+    @model_validator(mode="after")
+    def validate_credentials(self):
+        # ... existing knowledge_enabled block above ...
         if self.knowledge_enabled or not self.mock_mode:
             # Both paths reach the gateway: retrieval is gateway-only, and a live analyst
             # calls models through it. Fail at startup rather than at the first call.
             if not self.litellm_api_key.get_secret_value():
                 raise ValueError("litellm_api_key is required when the gateway is in use")
             secrets.append(self.litellm_api_key)
+        # ... existing embedding_model check and `return self` below ...
 ```
 
 - [ ] **Step 4: Run test to verify it passes**
@@ -504,13 +565,34 @@ In `validate_credentials`, add the gateway requirement directly after the existi
 Run: `uv run pytest tests/test_config_gateway.py -v`
 Expected: PASS, 7 tests.
 
-- [ ] **Step 5: Check the existing suite**
+- [ ] **Step 5: Update the two pre-existing tests this rule invalidates**
 
 ```bash
 uv run pytest -q
 ```
 
-Expected: `tests/test_config_knowledge.py` may assert the old `knowledge_mcp_url` default of `http://runbooks:8080/mcp`. If it fails on that, update that single assertion to the gateway URL — the change is intentional and this plan's Task 9 removes the direct path entirely. If it fails for any other reason, stop and report.
+Expected at this point: **2 failed, 78 passed, 22 skipped**. Both
+`test_enabling_with_a_duplicate_token_is_rejected` and
+`test_enabling_with_a_distinct_token_is_accepted` in `tests/test_config_knowledge.py`
+construct `Settings(knowledge_enabled=True, ...)` with no gateway key, which the new rule
+rejects before their own assertion is reached.
+
+That is intended behavior, not a regression: retrieval is gateway-only, so enabling it
+without a gateway credential is a misconfiguration that must fail at startup. Add
+`litellm_api_key="gateway"` to those two call sites only, with a short comment on each saying
+why the key is now required there.
+
+Do **not** add it to the shared `BASE` dict, and do **not** touch
+`test_enabling_without_a_token_is_rejected`. That one still passes because the knowledge-token
+check runs before the gateway check and raises first; the ordering is load-bearing for it.
+
+Then re-run:
+
+```bash
+uv run pytest -q
+```
+
+Expected: 80 passed, 22 skipped. If anything else fails, stop and report.
 
 - [ ] **Step 6: Commit**
 
@@ -645,6 +727,9 @@ class Analyst:
 Then pass the role at each of the three call sites. In `triage`:
 
 ```python
+class Analyst:
+    async def triage(self, state):
+        # ... existing mock_mode branch above ...
         return await self.structured(
             "triage", Triage, "Assess severity and need for investigation", state
         )
@@ -653,12 +738,15 @@ Then pass the role at each of the three call sites. In `triage`:
 In `investigate`:
 
 ```python
+class Analyst:
+    async def investigate(self, state):
+        # ... existing mock_mode branch above ...
         return await self.structured(
             "rca",
             InvestigationStep,
-            "Choose one read tool or conclude RCA. Tools: logs, metrics, kubernetes, deployments, "
-            "config_diffs, topology, runbooks, similar_incidents. Retrieval is optional. "
-            "Conclude only with corroborating evidence.",
+            "Choose one read tool or conclude RCA. Tools: logs, metrics, kubernetes, "
+            "deployments, config_diffs, topology, runbooks, similar_incidents. Retrieval "
+            "is optional. Conclude only with corroborating evidence.",
             state,
         )
 ```
@@ -666,6 +754,9 @@ In `investigate`:
 In `plan`:
 
 ```python
+class Analyst:
+    async def plan(self, state):
+        # ... existing mock_mode branch above ...
         return await self.structured(
             "plan",
             PlanDraft,
@@ -948,8 +1039,15 @@ model_list:
       api_base: http://stub-model:8100/v1
       api_key: stub
 
+# A dict keyed by server name, NOT a list of objects. Verified in Task 1 against
+# litellm 1.90.2: load_servers_from_config takes Dict[str, Any] and iterates .items(),
+# so the key here IS the server name. It must equal MCP_SERVER in knowledge_backend.py,
+# because that is what the <server>-<tool> prefix is built from.
+#
+# transport is `http` for streamable HTTP. There is no `streamable_http` literal; the
+# valid values are sse | http | stdio.
 mcp_servers:
-  - server_name: runbooks
+  runbooks:
     url: http://runbooks:8080/mcp
     transport: http
     available_on_public_internet: false
@@ -977,8 +1075,10 @@ import yaml, pathlib
 config = yaml.safe_load(pathlib.Path('deploy/litellm/config.yaml').read_text())
 assert [m['model_name'] for m in config['model_list']] == [
     'incident-triage', 'incident-rca', 'incident-plan']
-assert config['mcp_servers'][0]['allowed_tools'] == [
+assert list(config['mcp_servers']) == ['runbooks'], 'the key is the server name'
+assert config['mcp_servers']['runbooks']['allowed_tools'] == [
     'search_runbooks', 'search_similar_incidents']
+assert config['mcp_servers']['runbooks']['transport'] == 'http'
 print('config valid')
 "
 ```

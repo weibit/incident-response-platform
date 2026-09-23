@@ -1,0 +1,52 @@
+# Aliases, not provider models. The application asks for incident-triage; this file decides
+# what serves it. Changing a model here needs no application redeploy.
+#
+# All three point at the development stub so the platform can be exercised with no provider
+# account. Replace each api_base/model pair with a real provider to go live.
+model_list:
+  - model_name: incident-triage
+    litellm_params:
+      model: openai/stub-triage
+      api_base: http://stub-model:8100/v1
+      api_key: stub
+  - model_name: incident-rca
+    litellm_params:
+      model: openai/stub-rca
+      api_base: http://stub-model:8100/v1
+      api_key: stub
+  - model_name: incident-plan
+    litellm_params:
+      model: openai/stub-plan
+      api_base: http://stub-model:8100/v1
+      api_key: stub
+
+# A dict keyed by server name, NOT a list of objects. Verified in Task 1 against
+# litellm 1.90.2: load_servers_from_config takes Dict[str, Any] and iterates .items(),
+# so the key here IS the server name. It must equal MCP_SERVER in knowledge_backend.py,
+# because that is what the <server>-<tool> prefix is built from.
+#
+# transport is `http` for streamable HTTP. There is no `streamable_http` literal; the
+# valid values are sse | http | stdio.
+mcp_servers:
+  runbooks:
+    url: http://runbooks:8080/mcp
+    transport: http
+    # The gateway holds the upstream credential itself. It connects to runbooks at its own
+    # startup to list tools, when no caller request exists, so a forwarded per-caller header
+    # cannot work: verified as a 401 at startup before this was added. auth_type turns
+    # authentication_token into `Authorization: Bearer ...` (mcp_server_manager.py:878).
+    # os.environ/ resolves here because the proxy substitutes it across the whole config
+    # before MCP servers load (proxy_server.py:3969), recursing into nested dicts.
+    auth_type: bearer_token
+    authentication_token: os.environ/KNOWLEDGE_MCP_TOKEN
+    available_on_public_internet: false
+    # Second enforcement layer for the read-only guarantee. The server registers only these
+    # two tools; this makes that independent of the server's own registration, and LiteLLM
+    # applies it at both tools/list and tools/call.
+    allowed_tools:
+      - search_runbooks
+      - search_similar_incidents
+
+general_settings:
+  master_key: os.environ/LITELLM_MASTER_KEY
+  store_model_in_db: true

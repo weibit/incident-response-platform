@@ -42,7 +42,7 @@ async def test_maps_snippets_to_one_evidence(cfg):
     evidence = await backend(client, cfg).query("runbooks", "checkout", "rollback")
     assert client.calls == [
         (
-            "search_runbooks",
+            "runbooks-search_runbooks",
             {"service": "checkout", "query": "rollback", "limit": cfg.knowledge_top_k},
         )
     ]
@@ -55,7 +55,15 @@ async def test_maps_snippets_to_one_evidence(cfg):
 async def test_similar_incidents_uses_its_own_tool(cfg):
     client = FakeClient([SNIPPET])
     await backend(client, cfg).query("similar_incidents", "checkout", "timeouts")
-    assert client.calls[0][0] == "search_similar_incidents"
+    assert client.calls[0][0] == "runbooks-search_similar_incidents"
+
+
+def test_tool_names_carry_the_gateway_namespace():
+    # LiteLLM prefixes every tool with its server name. An unprefixed name reaches the
+    # gateway as an unknown tool, which is an error, not an empty result.
+    from incident_platform.integrations.knowledge_backend import MCP_SERVER, TOOL_CALLS
+
+    assert all(name.startswith(f"{MCP_SERVER}-") for name in TOOL_CALLS.values())
 
 
 async def test_evidence_id_is_stable_across_replay(cfg):

@@ -20,3 +20,7 @@ Preserve these invariants:
   Evidence.trusted from document content.
 - A valid RCA must cite at least one observational tool. Runbooks and prior incidents are
   procedure and precedent, not observations.
+- The application names model roles, never providers. Provider selection belongs to the
+  gateway config.
+- The stub upstream is development-only. Never point a deployment's aliases at it, and never
+  treat its output as model behavior.
