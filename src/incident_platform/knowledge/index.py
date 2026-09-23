@@ -150,7 +150,7 @@ WHERE state->>'status' = 'resolved' AND state->'rca'->>'hypothesis' IS NOT NULL
 
 
 async def ingest_resolved_incidents(pool) -> int:
-    """Index resolved incidents so similar_incidents has a corpus.
+    """Index resolved incidents as the `incident` corpus.
 
     Cold-starts empty, which is correct: with no history there is no precedent, and
     the backend reports an empty result as untrusted rather than inventing one.
