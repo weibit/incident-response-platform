@@ -63,3 +63,9 @@ def test_verdict_values():
     assert verdict_value("supported") == 1.0
     assert verdict_value("partially_supported") == 0.5
     assert verdict_value("unsupported") == 0.0
+
+
+def test_score_ids_do_not_collide_across_argument_boundaries():
+    # A flat "{incident}:{name}" seed collides here, and the failure would be silent:
+    # two distinct scores would merge into one upsert.
+    assert score_id_for("a:b", "c") != score_id_for("a", "b:c")

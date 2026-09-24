@@ -19,8 +19,13 @@ class Score(NamedTuple):
 
 
 def score_id_for(incident_id: str, name: str) -> str:
-    """Derive a score's identity so a redelivered event overwrites instead of duplicating."""
-    return str(uuid5(NAMESPACE_URL, f"score:{incident_id}:{name}"))
+    """Derive a score's identity so a redelivered event overwrites instead of duplicating.
+
+    Nested rather than a joined string: a flat "{incident_id}:{name}" seed collides whenever
+    the two arguments' concatenation is ambiguous, which would silently merge two distinct
+    scores into one upsert.
+    """
+    return str(uuid5(uuid5(NAMESPACE_URL, incident_id), name))
 
 
 def verdict_value(label: str) -> float:
