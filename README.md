@@ -250,6 +250,58 @@ never point `LANGFUSE_BASE_URL` at an external host.
 `integrations/evaluation.py` supplies explicit prompt, score and dataset hooks; `evals/cases.jsonl`
 is ready to seed evaluation datasets. Upload/evaluation is opt-in, not automatically invoked.
 
+## Bounded LLM context
+
+Before every live triage, investigation, or planning call, `Analyst.structured()` calls
+`integrations/context.py:build_context()` with the current LangGraph state:
+
+```text
+Checkpoint state → role-specific view → budget check → bounded summarization if needed
+                 → final budget check → LLM request
+```
+
+The view excludes duplicate raw input, old plans, approvals, execution records, and unknown
+top-level fields. It retains incident details, evidence IDs/provenance, and the fields needed
+by the role. Original state is never rewritten: policy validation and checkpoints retain
+the original observations. Small contexts make no summary calls. When over budget, older
+uncited observations are summarized first (very short observations remain verbatim), then
+hypothesis history if necessary. Summaries carry an explicit lossy-summary label and the
+original observation's SHA-256; they are not new evidence or authorization. For planning,
+observations cited by the RCA stay verbatim. If those required originals cannot fit, the
+workflow requests manual review rather than making a plan from compressed citations.
+
+Configure these settings in `.env`:
+
+| Setting | Default | Meaning |
+|---|---|---|
+| `CONTEXT_WINDOW_TOKENS` | `32768` | Smallest supported window across analyst/summary aliases and fallbacks |
+| `CONTEXT_OUTPUT_TOKENS` | `2048` | Reserved and requested maximum analyst output |
+| `CONTEXT_SAFETY_TOKENS` | `2048` | Reserve for provider message/schema overhead |
+| `CONTEXT_SUMMARY_OUTPUT_TOKENS` | `768` | Reserved and requested maximum summary output |
+| `CONTEXT_SUMMARY_MAX_CALLS` | `8` | Maximum summary invocations per analyst request |
+| `CONTEXT_SUMMARY_TIMEOUT_SECONDS` | `60` | Total summarization deadline per analyst request |
+| `LLM_MODEL_SUMMARY` | `incident-summary` | Gateway alias used only when compression is needed |
+
+The builder conservatively counts serialized UTF-8 bytes as estimated input tokens,
+including instructions, task, JSON, and output schema. It does **not** discover an alias's
+tokenizer or actual window. Configure the window against every real gateway route/fallback
+and validate against provider usage; the estimate intentionally leaves capacity unused.
+Large observations are split into bounded chunks and their summaries reduced with the same
+budget checks. Generated summaries are schema-validated, must shrink the input, and have
+bounded length. Summary calls inherit trace correlation and cannot invoke tools.
+
+Summarizer failure, timeout, exhausted call budget, uncompressible required context, or an
+explicit provider `context_length_exceeded` response routes the graph to `manual_review`
+with `context_error`, bypassing approval/execution. Task cancellation still propagates.
+`context.built` logs counts and estimates, never evidence bodies. Summaries are request-local,
+not cached across nodes or restarts; repeated calls can incur repeated summarization cost.
+
+`MOCK_MODE=true` makes no LLM requests and skips this path. The checked-in summary alias
+points to the development stub, just like the other aliases: replace it with a real model
+route before evaluating summarization quality. Unit tests use controlled responses and do
+not prove that a model preserves every important fact. Test contradiction/negation retention
+and RCA quality on representative incidents before enabling live operational adapters.
+
 ## Tests and verification
 
 ```sh

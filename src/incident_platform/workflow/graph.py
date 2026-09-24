@@ -9,16 +9,29 @@ Node updates advance the workflow directly; Kafka carries emitted domain events.
 
 import hashlib
 import json
+from functools import wraps
 
 from langgraph.graph import END, START, StateGraph
 from langgraph.types import RetryPolicy, interrupt
 
+from incident_platform.integrations.context import ContextBudgetExceeded
 from incident_platform.integrations.tools import read_tools
 from incident_platform.models import IncidentInput, IncidentState, Plan
 from incident_platform.workflow.policy import authorized_execution, policy, valid_rca
 
 
 def build_graph(cfg, store, analyst, backend, checkpointer):
+    def context_guard(fn):
+        @wraps(fn)
+        async def guarded(state):
+            try:
+                return await fn(state)
+            except ContextBudgetExceeded:
+                # Fixed reason only: exception chains may contain provider response text.
+                return {"context_error": f"context_unavailable:{fn.__name__}", "rca_valid": False}
+
+        return guarded
+
     async def emit(state, kind, payload):
         await store.emit(state, kind, payload)
 
@@ -38,6 +51,7 @@ def build_graph(cfg, store, analyst, backend, checkpointer):
         evidence = await tools["topology"].ainvoke({"query": "Owner and dependency map"})
         return {"evidence": [evidence]}
 
+    @context_guard
     async def triage(state):
         result = await analyst.triage(state)
         # Deterministic rule cannot be downgraded by the model.
@@ -48,6 +62,7 @@ def build_graph(cfg, store, analyst, backend, checkpointer):
         await emit(state, "incident.triaged", result.model_dump())
         return {"triage": result.model_dump()}
 
+    @context_guard
     async def investigate(state):
         step = await analyst.investigate(state)
         update = {
@@ -68,6 +83,8 @@ def build_graph(cfg, store, analyst, backend, checkpointer):
         return update
 
     def investigation_route(state):
+        if state.get("context_error"):
+            return "manual"
         if state.get("rca"):
             return "validate_rca"
         return "investigate" if state["rounds"] < cfg.max_investigation_rounds else "manual"
@@ -78,6 +95,7 @@ def build_graph(cfg, store, analyst, backend, checkpointer):
             await emit(state, "incident.rca_completed", state["rca"])
         return {"rca_valid": valid}
 
+    @context_guard
     async def plan(state):
         draft = await analyst.plan(state)
         content = json.dumps(draft.model_dump(mode="json"), sort_keys=True)
@@ -129,7 +147,9 @@ def build_graph(cfg, store, analyst, backend, checkpointer):
 
     async def manual(state):
         await emit(
-            state, "incident.manual_review", {"reason": "Review or additional evidence required"}
+            state,
+            "incident.manual_review",
+            {"reason": state.get("context_error") or "Review or additional evidence required"},
         )
         return {"status": "manual_review"}
 
@@ -162,7 +182,10 @@ def build_graph(cfg, store, analyst, backend, checkpointer):
     graph.add_edge("normalize", "enrich")
     graph.add_edge("enrich", "triage")
     graph.add_conditional_edges(
-        "triage", lambda s: "investigate" if s["triage"]["investigate"] else "manual"
+        "triage",
+        lambda s: (
+            "investigate" if not s.get("context_error") and s["triage"]["investigate"] else "manual"
+        ),
     )
     graph.add_conditional_edges("investigate", investigation_route)
     graph.add_conditional_edges(
@@ -173,7 +196,7 @@ def build_graph(cfg, store, analyst, backend, checkpointer):
             else ("investigate" if s["rounds"] < cfg.max_investigation_rounds else "manual")
         ),
     )
-    graph.add_edge("plan", "policy")
+    graph.add_conditional_edges("plan", lambda s: "manual" if s.get("context_error") else "policy")
     graph.add_conditional_edges(
         "policy",
         lambda s: {"allow": "execute", "approval": "approval", "deny": "denied"}[s["decision"]],

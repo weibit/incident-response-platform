@@ -45,6 +45,15 @@ tenant identity to the ID derivation before multi-tenant deployment.
 
 ## Failure and operator procedures
 
+- **Context budget exceeded:** the graph finishes as `manual_review` with a fixed
+  `context_unavailable:<stage>` reason rather than repeatedly submitting the same oversized
+  prompt. Inspect original evidence in the checkpoint/status snapshot and the `context.built`
+  estimates. Check `CONTEXT_*` settings against the smallest real model/fallback window and
+  the `incident-summary` gateway route. Summarization cannot change policy or approval state.
+  Summaries are lossy and request-local; cited observations remain verbatim for planning.
+  Replanning/reopening still requires an explicit operator procedure; changing a budget does
+  not automatically restart an incident already sent to manual review.
+
 - **Kafka down:** accepted webhooks accumulate in outbox; relay reconnects. Monitor oldest unsent age,
   outbox count, disk space, and publish errors. On sustained outage, shed load before exhausting storage.
 - **Database down:** gateway cannot acknowledge events; upstream must retry with the same source event ID.

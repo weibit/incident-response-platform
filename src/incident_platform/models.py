@@ -104,6 +104,7 @@ class Approval(StrictModel):
 
 
 class IncidentState(TypedDict, total=False):
+    context_error: str
     input_event_id: str
     incident_id: str
     correlation_id: str

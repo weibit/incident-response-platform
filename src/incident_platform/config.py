@@ -34,6 +34,14 @@ class Settings(BaseSettings):
     llm_model_triage: str | None = None
     llm_model_rca: str | None = None
     llm_model_plan: str | None = None
+    llm_model_summary: str = "incident-summary"
+    # Use the smallest window across gateway routes/fallbacks for all four model roles.
+    context_window_tokens: int = Field(default=32768, ge=4096)
+    context_output_tokens: int = Field(default=2048, ge=128)
+    context_safety_tokens: int = Field(default=2048, ge=256)
+    context_summary_output_tokens: int = Field(default=768, ge=128)
+    context_summary_max_calls: int = Field(default=8, ge=1, le=32)
+    context_summary_timeout_seconds: int = Field(default=60, ge=1)
     litellm_base_url: str = "http://litellm:4000"
     litellm_api_key: SecretStr = SecretStr("")
     langfuse_enabled: bool = False
@@ -63,6 +71,15 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def validate_credentials(self):
+        if (
+            self.context_safety_tokens
+            + max(self.context_output_tokens, self.context_summary_output_tokens)
+            + 1024
+            >= self.context_window_tokens
+        ):
+            raise ValueError(
+                "Context window must leave room for input after output/safety reserves"
+            )
         secrets = [
             self.jira_webhook_token,
             self.jira_approval_token,

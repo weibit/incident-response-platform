@@ -1,9 +1,14 @@
 # Aliases, not provider models. The application asks for incident-triage; this file decides
 # what serves it. Changing a model here needs no application redeploy.
 #
-# All three point at the development stub so the platform can be exercised with no provider
+# All aliases point at the development stub so the platform can be exercised with no provider
 # account. Replace each api_base/model pair with a real provider to go live.
 model_list:
+  - model_name: incident-summary
+    litellm_params:
+      model: openai/stub-summary
+      api_base: http://stub-model:8100/v1
+      api_key: stub
   - model_name: incident-triage
     litellm_params:
       model: openai/stub-triage
