@@ -63,12 +63,18 @@ async def test_faithfulness_returns_the_verdict(monkeypatch):
     assert verdict.reason
 
 
-async def test_faithfulness_prompt_carries_only_what_it_was_given(monkeypatch):
+async def test_faithfulness_prompt_carries_the_hypothesis_and_cited_evidence(monkeypatch):
+    # Named for what it checks. Exclusivity is not testable here — faithfulness() can only
+    # carry what it is handed — so the "only cited evidence" property is pinned where it
+    # actually lives, in cited_evidence's own test.
+    cfg = _cfg()
     model = _recording(monkeypatch)
-    await Judge(_cfg()).faithfulness("release v2 regression", 0.9, CITED)
+    await Judge(cfg).faithfulness("release v2 regression", 0.9, CITED)
     rendered = str(model.seen)
     assert "p95 2400ms after v2" in rendered
     assert "release v2 regression" in rendered
+    # One exclusion that is meaningful at this level: no credential may reach the prompt.
+    assert cfg.litellm_api_key.get_secret_value() not in rendered
 
 
 async def test_judge_uses_its_own_role_alias(monkeypatch):
