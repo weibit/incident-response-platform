@@ -24,6 +24,11 @@ model_list:
       model: openai/stub-plan
       api_base: http://stub-model:8100/v1
       api_key: stub
+  - model_name: incident-judge
+    litellm_params:
+      model: openai/stub-plan
+      api_base: http://stub-model:8100/v1
+      api_key: stub
 
 # A dict keyed by server name, NOT a list of objects. Verified in Task 1 against
 # litellm 1.90.2: load_servers_from_config takes Dict[str, Any] and iterates .items(),

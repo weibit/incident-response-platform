@@ -59,6 +59,11 @@ class RCA(StrictModel):
     evidence_ids: list[str]
 
 
+class Verdict(StrictModel):
+    label: Literal["supported", "partially_supported", "unsupported"]
+    reason: str
+
+
 class InvestigationStep(StrictModel):
     hypothesis: str
     tool: (

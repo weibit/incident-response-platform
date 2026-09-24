@@ -35,7 +35,11 @@ class Settings(BaseSettings):
     llm_model_rca: str | None = None
     llm_model_plan: str | None = None
     llm_model_summary: str = "incident-summary"
-    # Use the smallest window across gateway routes/fallbacks for all four model roles.
+    llm_model_judge: str | None = None
+    judge_enabled: bool = False
+    # Use the smallest window across gateway routes/fallbacks for all five model roles.
+    # The judge is one of them but does not route through build_context, so its alias must
+    # have room for an incident's cited evidence unbounded.
     context_window_tokens: int = Field(default=32768, ge=4096)
     context_output_tokens: int = Field(default=2048, ge=128)
     context_safety_tokens: int = Field(default=2048, ge=256)
@@ -69,6 +73,10 @@ class Settings(BaseSettings):
     def plan_model(self) -> str:
         return self.llm_model_plan or self.llm_model
 
+    @property
+    def judge_model(self) -> str:
+        return self.llm_model_judge or self.llm_model
+
     @model_validator(mode="after")
     def validate_credentials(self):
         if (
@@ -93,15 +101,20 @@ class Settings(BaseSettings):
             if not self.knowledge_mcp_token.get_secret_value():
                 raise ValueError("knowledge_mcp_token is required when knowledge_enabled is true")
             secrets.append(self.knowledge_mcp_token)
-        if self.knowledge_enabled or not self.mock_mode:
-            # Both paths reach the gateway: retrieval is gateway-only, and a live analyst
-            # calls models through it. Fail at startup rather than at the first call.
+        if self.knowledge_enabled or not self.mock_mode or self.judge_enabled:
+            # Every path here reaches the gateway: retrieval is gateway-only, a live analyst
+            # calls models through it, and so does the judge. One key, counted once, so it is
+            # held to the same distinctness rule as any other trust boundary.
             if not self.litellm_api_key.get_secret_value():
                 raise ValueError("litellm_api_key is required when the gateway is in use")
             secrets.append(self.litellm_api_key)
         values = [value.get_secret_value() for value in secrets]
         if any(not value for value in values) or len(set(values)) != len(values):
             raise ValueError("Configure nonempty, distinct credentials for each trust boundary")
+        if self.judge_enabled and not self.langfuse_enabled:
+            # Scores must attach to a trace; without tracing the SDK accepts them and the
+            # server drops them silently, so the judge would produce nothing and say nothing.
+            raise ValueError("langfuse_enabled is required when judge_enabled is true")
         if self.embedding_model and not self.embedding_dim:
             raise ValueError("embedding_dim is required when embedding_model is set")
         return self

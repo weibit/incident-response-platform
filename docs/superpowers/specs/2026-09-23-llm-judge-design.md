@@ -184,6 +184,25 @@ treats cited evidence as untrusted data.
 
 ## Failure handling
 
+**Added 2026-09-24 after review found a gap in the original design.** An unprocessable event must
+not stop all judging. As first specified, both the envelope parse and `record_score` sat unguarded
+inside the consumer loop, so a malformed message — or a persistent collector failure — meant the
+offset was never committed and the broker redelivered the same message forever. With one consumer
+and `max_poll_records=1` that head-of-line blocks every later incident's scores, silently.
+
+The judge therefore **drains what it cannot process and commits anyway**. This is a deliberate
+trade: a transient collector outage loses that incident's scores permanently, which is accepted
+because losing one incident's scores is strictly better than losing every subsequent one, and
+because the judge is observational — nothing downstream depends on a score existing. Recovery is
+an explicit operator action rather than automatic retry: score ids are derived, so resetting this
+consumer group's offsets re-scores the affected incidents and overwrites rather than duplicates.
+
+This is where the judge deliberately differs from `worker/main.py`. The worker cannot drop an
+event, so `ingest` commits only after a durable write and routes malformed input to a DLQ, and
+`run_jobs` carries an attempt cap. The judge has no such obligation, so it takes the simpler
+path rather than growing a DLQ and a retry ledger for observational data.
+
+
 The judge's dependency on Langfuse is different from the worker's, deliberately. The worker
 treats tracing as optional and degrades silently, because tracing is incidental to incident
 correctness. The judge exists to produce scores; if it cannot reach its sink it is useless
