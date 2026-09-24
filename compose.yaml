@@ -138,6 +138,14 @@ services:
     depends_on:
       init: {condition: service_completed_successfully}
       litellm: {condition: service_healthy}
+  judge:
+    <<: *app
+    profiles: ["observability"]
+    command: ["python", "-m", "incident_platform.judge.main"]
+    depends_on:
+      init: {condition: service_completed_successfully}
+      litellm: {condition: service_healthy}
+      langfuse-web: {condition: service_healthy}
   langfuse-postgres:
     image: postgres:17
     profiles: ["observability"]
