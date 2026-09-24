@@ -35,6 +35,8 @@ class Settings(BaseSettings):
     llm_model_rca: str | None = None
     llm_model_plan: str | None = None
     llm_model_summary: str = "incident-summary"
+    llm_model_judge: str | None = None
+    judge_enabled: bool = False
     # Use the smallest window across gateway routes/fallbacks for all four model roles.
     context_window_tokens: int = Field(default=32768, ge=4096)
     context_output_tokens: int = Field(default=2048, ge=128)
@@ -69,6 +71,10 @@ class Settings(BaseSettings):
     def plan_model(self) -> str:
         return self.llm_model_plan or self.llm_model
 
+    @property
+    def judge_model(self) -> str:
+        return self.llm_model_judge or self.llm_model
+
     @model_validator(mode="after")
     def validate_credentials(self):
         if (
@@ -102,6 +108,13 @@ class Settings(BaseSettings):
         values = [value.get_secret_value() for value in secrets]
         if any(not value for value in values) or len(set(values)) != len(values):
             raise ValueError("Configure nonempty, distinct credentials for each trust boundary")
+        if self.judge_enabled:
+            # Scores must attach to a trace; without tracing the SDK accepts them and the
+            # server drops them silently, so the judge would produce nothing and say nothing.
+            if not self.langfuse_enabled:
+                raise ValueError("langfuse_enabled is required when judge_enabled is true")
+            if not self.litellm_api_key.get_secret_value():
+                raise ValueError("litellm_api_key is required when judge_enabled is true")
         if self.embedding_model and not self.embedding_dim:
             raise ValueError("embedding_dim is required when embedding_model is set")
         return self
