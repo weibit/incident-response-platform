@@ -22,8 +22,8 @@ from incident_platform.integrations.llm import Analyst
 from incident_platform.integrations.tools import MockEvidenceBackend, UnconfiguredEvidenceBackend
 from incident_platform.knowledge import mcp_client
 from incident_platform.models import Envelope
+from incident_platform.observability import configure_logging, graph_config, init_tracing
 from incident_platform.storage import Store
-from incident_platform.telemetry import configure_logging, graph_config, init_tracing
 from incident_platform.transport import relay_forever
 from incident_platform.workflow.graph import build_graph
 

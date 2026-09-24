@@ -1,4 +1,4 @@
-"""Configure structured JSON logs and optional Langfuse tracing.
+"""Derive trace identity and attach Langfuse to the workflow.
 
 graph_config() sets incident_id as the LangGraph thread_id, derives this delivered event's
 trace id, and adds correlation metadata, tags and optional callbacks. One trace covers one
@@ -6,28 +6,13 @@ delivered event; traces for an incident are grouped by langfuse_session_id. The 
 selects checkpoint history; this module does not persist workflow state.
 """
 
-import logging
-import re
-
 import structlog
 from langfuse import Langfuse
 from langfuse.langchain import CallbackHandler
-from pydantic import SecretStr
+
+from incident_platform.observability.masking import build_mask
 
 log = structlog.get_logger()
-
-
-def configure_logging():
-    logging.basicConfig(level=logging.INFO, format="%(message)s")
-    structlog.configure(
-        processors=[
-            structlog.contextvars.merge_contextvars,
-            structlog.processors.TimeStamper(fmt="iso"),
-            structlog.processors.add_log_level,
-            structlog.processors.JSONRenderer(),
-        ],
-        logger_factory=structlog.stdlib.LoggerFactory(),
-    )
 
 
 def trace_id_for(incident_id: str, event_id: str) -> str:
@@ -38,50 +23,6 @@ def trace_id_for(incident_id: str, event_id: str) -> str:
     duplicate, which is what keeps later score attachment idempotent.
     """
     return Langfuse.create_trace_id(seed=f"{incident_id}:{event_id}")
-
-
-REDACTED = "[redacted]"
-BEARER = re.compile(r"(Authorization:\s*Bearer\s+)\S+", re.IGNORECASE)
-
-
-def build_mask(cfg):
-    """Redact known credentials from everything sent to the trace store.
-
-    Exact-value redaction only. Evidence, ticket and runbook bodies are traced verbatim;
-    heuristics would false-positive on log and stack-trace text and cannot be pinned by a
-    test. Secrets are derived from the Settings model's SecretStr fields rather than listed, so a
-    credential added later cannot silently reach the trace store. Empty ones are dropped
-    because "" matches everywhere.
-    """
-    secrets = sorted(
-        (
-            value.get_secret_value()
-            for name in type(cfg).model_fields
-            if isinstance(value := getattr(cfg, name), SecretStr) and value.get_secret_value()
-        ),
-        key=len,
-        reverse=True,
-    )
-
-    def redact(text):
-        # Longest first, so a secret that contains another is not partially rewritten.
-        for secret in secrets:
-            text = text.replace(secret, REDACTED)
-        return BEARER.sub(rf"\1{REDACTED}", text)
-
-    def walk(value):
-        if isinstance(value, str):
-            return redact(value)
-        if isinstance(value, dict):
-            return {key: walk(item) for key, item in value.items()}
-        if isinstance(value, list | tuple):
-            return [walk(item) for item in value]
-        return value
-
-    def mask(*, data, **_):
-        return walk(data)
-
-    return mask
 
 
 def init_tracing(cfg):

@@ -310,7 +310,7 @@ async def test_wire_output_limit_and_trace_survive_summary_binding(cfg, monkeypa
     from langchain_core.prompts import ChatPromptTemplate
     from langchain_openai.chat_models.base import BaseChatOpenAI
 
-    from incident_platform.telemetry import trace_id_for
+    from incident_platform.observability import trace_id_for
 
     class Captured(Exception):
         pass

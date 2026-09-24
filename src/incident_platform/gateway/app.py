@@ -18,8 +18,8 @@ from pydantic import ValidationError
 from incident_platform.config import settings
 from incident_platform.gateway.auth import bearer, signed
 from incident_platform.models import Approval, Envelope, IncidentInput
+from incident_platform.observability import configure_logging
 from incident_platform.storage import Conflict, Store
-from incident_platform.telemetry import configure_logging
 from incident_platform.transport import relay_forever
 
 

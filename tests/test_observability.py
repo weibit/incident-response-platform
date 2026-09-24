@@ -5,7 +5,7 @@ from langfuse import get_client
 from langfuse._client.resource_manager import LangfuseResourceManager
 from pydantic import SecretStr
 
-from incident_platform.telemetry import (
+from incident_platform.observability import (
     REDACTED,
     build_mask,
     graph_config,
@@ -88,7 +88,7 @@ class FakeClient:
 
 def test_init_tracing_returns_none_when_disabled(cfg, monkeypatch):
     monkeypatch.setattr(
-        "incident_platform.telemetry.Langfuse",
+        "incident_platform.observability.tracing.Langfuse",
         lambda **kwargs: pytest.fail("client must not be constructed when disabled"),
     )
     assert init_tracing(cfg) is None
@@ -97,7 +97,7 @@ def test_init_tracing_returns_none_when_disabled(cfg, monkeypatch):
 def test_init_tracing_passes_a_mask(cfg, monkeypatch):
     built = []
     monkeypatch.setattr(
-        "incident_platform.telemetry.Langfuse",
+        "incident_platform.observability.tracing.Langfuse",
         lambda **kwargs: built.append(FakeClient(**kwargs)) or built[-1],
     )
     client = init_tracing(cfg.model_copy(update={"langfuse_enabled": True}))
@@ -112,7 +112,7 @@ def test_init_tracing_survives_a_failing_auth_check(cfg, monkeypatch):
         def auth_check(self):
             raise ConnectionError("collector unreachable")
 
-    monkeypatch.setattr("incident_platform.telemetry.Langfuse", Unreachable)
+    monkeypatch.setattr("incident_platform.observability.tracing.Langfuse", Unreachable)
     # Tracing is never a reason the worker fails to start.
     assert init_tracing(cfg.model_copy(update={"langfuse_enabled": True})) is not None
 
@@ -149,7 +149,7 @@ def test_graph_config_binds_the_handler_to_the_derived_trace(monkeypatch):
             built["trace_context"] = trace_context
             built["update_trace"] = update_trace
 
-    monkeypatch.setattr("incident_platform.telemetry.CallbackHandler", FakeHandler)
+    monkeypatch.setattr("incident_platform.observability.tracing.CallbackHandler", FakeHandler)
     config = graph_config("inc-1", "corr-1", "evt-1", True)
     assert len(config["callbacks"]) == 1
     assert built["trace_context"] == {"trace_id": trace_id_for("inc-1", "evt-1")}
@@ -161,7 +161,7 @@ def test_graph_config_degrades_when_the_handler_cannot_be_built(monkeypatch):
     def explode(**_):
         raise RuntimeError("langfuse unavailable")
 
-    monkeypatch.setattr("incident_platform.telemetry.CallbackHandler", explode)
+    monkeypatch.setattr("incident_platform.observability.tracing.CallbackHandler", explode)
     # Tracing is never a reason an incident is not processed.
     config = graph_config("inc-1", "corr-1", "evt-1", True)
     assert config["callbacks"] == []
@@ -178,3 +178,18 @@ def test_init_tracing_survives_a_malformed_sdk_env(cfg, monkeypatch):
 def test_init_tracing_survives_a_malformed_timeout(cfg, monkeypatch):
     monkeypatch.setenv("LANGFUSE_TIMEOUT", "abc")
     assert init_tracing(cfg.model_copy(update={"langfuse_enabled": True})) is None
+
+
+def test_mask_does_not_corrupt_its_own_placeholder(cfg):
+    # A secret that is a substring of "[redacted]" must not be re-replaced inside text the
+    # mask already wrote. Sequential str.replace rereads its own output; one pass does not.
+    tricky = cfg.model_copy(update={"jira_approval_token": SecretStr("red")})
+    assert build_mask(tricky)(data="x jira y") == "x [redacted] y"
+
+
+def test_mask_still_prefers_the_longest_matching_secret(cfg):
+    # The alternation is ordered longest first, so switching to one pass must not lose this.
+    overlapping = cfg.model_copy(
+        update={"jira_webhook_token": SecretStr("abc"), "jira_approval_token": SecretStr("abcdef")}
+    )
+    assert build_mask(overlapping)(data="x abcdef y") == "x [redacted] y"

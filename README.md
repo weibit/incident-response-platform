@@ -84,7 +84,7 @@ src/incident_platform/
   storage.py         PostgreSQL outbox/inbox, dedup, approvals, audit, per-incident lock
   schema.sql         additive application schema
   transport.py       idempotent Kafka producer + transactional outbox relay
-  telemetry.py       structured logs, trace ids, credential masking, Langfuse callbacks
+  observability/     structured logs, trace ids, credential masking, Langfuse callbacks
   bootstrap.py       one-time application/checkpoint/topic setup
 scripts/             curl fixtures, signing helper, end-to-end HTTP demo
  tests/              gateway, graph, policy, PostgreSQL recovery tests

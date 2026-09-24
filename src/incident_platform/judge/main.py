@@ -21,8 +21,8 @@ from incident_platform.judge.scoring import (
     verdict_value,
 )
 from incident_platform.models import Envelope
+from incident_platform.observability import configure_logging, init_tracing, trace_id_for
 from incident_platform.storage import Store
-from incident_platform.telemetry import configure_logging, init_tracing, trace_id_for
 
 log = structlog.get_logger()
 TERMINAL_TOPICS = ("incident.resolved", "incident.manual_review")

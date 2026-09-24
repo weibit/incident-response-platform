@@ -7,7 +7,7 @@ from langchain_openai.chat_models.base import BaseChatOpenAI
 from incident_platform.config import Settings
 from incident_platform.integrations.llm import Analyst, _structured_model
 from incident_platform.models import Triage
-from incident_platform.telemetry import trace_id_for
+from incident_platform.observability import trace_id_for
 
 BASE = {
     "_env_file": None,
