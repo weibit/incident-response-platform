@@ -36,3 +36,15 @@ def test_judge_requires_tracing():
 def test_judge_requires_the_gateway():
     with pytest.raises(ValueError, match="litellm_api_key"):
         Settings(**BASE, judge_enabled=True, langfuse_enabled=True)
+
+
+def test_judge_gateway_key_must_be_distinct():
+    # The judge calls the gateway, so reusing another boundary's credential as the gateway
+    # key is the exact thing the distinctness check exists to stop.
+    with pytest.raises(ValueError, match="distinct"):
+        Settings(**BASE, judge_enabled=True, langfuse_enabled=True, litellm_api_key="jira")
+
+
+def test_a_distinct_gateway_key_is_still_accepted():
+    cfg = Settings(**BASE, judge_enabled=True, langfuse_enabled=True, litellm_api_key="gw")
+    assert cfg.judge_enabled is True
