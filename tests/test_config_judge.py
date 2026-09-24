@@ -48,3 +48,24 @@ def test_judge_gateway_key_must_be_distinct():
 def test_a_distinct_gateway_key_is_still_accepted():
     cfg = Settings(**BASE, judge_enabled=True, langfuse_enabled=True, litellm_api_key="gw")
     assert cfg.judge_enabled is True
+
+
+def test_judge_shares_one_gateway_key_with_the_live_analyst():
+    # Two conditions both require the gateway key. Counting it twice would fail the
+    # distinctness check on a valid config, which is the trap this guards.
+    cfg = Settings(
+        **BASE, judge_enabled=True, langfuse_enabled=True, mock_mode=False, litellm_api_key="gw"
+    )
+    assert cfg.judge_enabled is True
+
+
+def test_judge_shares_one_gateway_key_with_knowledge_retrieval():
+    cfg = Settings(
+        **BASE,
+        judge_enabled=True,
+        langfuse_enabled=True,
+        knowledge_enabled=True,
+        knowledge_mcp_token="kn",
+        litellm_api_key="gw",
+    )
+    assert cfg.judge_enabled is True
