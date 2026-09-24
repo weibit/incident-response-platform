@@ -67,3 +67,45 @@ only its eth0 address, so a loopback healthcheck can never pass; and MinIO must 
 
 Traces in this check contained mock evidence only. No external LLM, Langfuse Cloud, Jira, Slack,
 SIEM or Kubernetes endpoint was contacted.
+
+## LLM-as-judge evaluation (2026-09-24)
+
+Verified against Langfuse server `3.225.10`, langfuse SDK 3.15.0, LiteLLM proxy v1.90.2, with
+`docker compose --profile observability up`, `LANGFUSE_ENABLED=true` and `JUDGE_ENABLED=true`.
+The app image was rebuilt first and the gateway recreated: without the rebuild the judge module
+is absent from the image, and without recreating `litellm` the `incident-judge` alias is not
+registered, so the judge's model call would fail.
+
+- `uv run pytest`: 193 passed, 23 skipped. `ruff check` and `ruff format --check`: passed.
+- `docker compose config --services`: still exactly the original ten. `judge` appears only under
+  the `observability` profile, which totals 17 services.
+- The judge joined consumer group `incident-judge-v1` and subscribed to `incident.resolved` and
+  `incident.manual_review`.
+- **Five scores on the incident's first trace**, with the types the design specifies:
+  `investigation_rounds` NUMERIC 3, `outcome_status` CATEGORICAL with `resolved` in `stringValue`,
+  `outcome_verified` BOOLEAN 1, `rca_citations_valid` BOOLEAN 1, `rca_faithfulness` NUMERIC 1 with
+  comment `supported: stub`. The reason is `stub` because the stub upstream returns canned output;
+  a real provider supplies a substantive one.
+- **Trace identity is derived, confirmed independently.** Recomputing
+  `trace_id_for(incident_id, state["input_event_id"])` locally produced `4c3f0e75…af58`, which
+  resolves to a real trace carrying 20 observations and `sessionId` equal to the incident id.
+- **Idempotency holds under genuine redelivery.** The `incident-judge-v1` consumer group was reset
+  to earliest and the judge restarted, replaying every terminal event. The trace still carried
+  **five** scores, not ten: the derived `score_id` upserts rather than appending.
+- **Audit rows are append-only, unlike scores.** The same replay took `judge.verdict` rows from 13
+  to 26. That is correct — the audit log records each judging attempt — but it means audit volume
+  grows with replays while score volume does not.
+- No `judge.skipped`, `judge.unparseable`, `judge.export_failed` or `judge.untraceable` in any run.
+
+**The silent-discard behaviour was confirmed at scale, and it is the strongest argument for the
+audit row being the durable floor.** On first start the judge consumed twelve historical terminal
+events from earlier runs and wrote a `judge.verdict` row for every one, attempting roughly sixty
+score writes. Only five were stored. The other incidents had been processed while tracing was
+off, so the trace ids the judge derived name traces that do not exist, and the server discarded
+those writes without an error anywhere — no exception, no warning, nothing in the judge's log.
+Only the PostgreSQL audit rows record that those incidents were judged at all.
+
+Operational note carried over from the tracing work: the Langfuse ingestion worker does not
+recover its Redis connections after the host sleeps. It logged socket timeouts and ingested
+nothing until restarted. Check `docker compose logs langfuse-worker` for socket timeouts before
+concluding that a score write failed.
