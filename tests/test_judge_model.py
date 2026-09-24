@@ -30,9 +30,13 @@ def _cfg(**overrides):
 
 class RecordingJudgeModel:
     def __init__(self, result):
-        self.result, self.seen = result, None
+        self.result, self.seen, self.schema_seen = result, None, None
 
     def with_structured_output(self, schema, **_):
+        # Record the schema: a double that discards it would pass even if the call site asked
+        # for the wrong model, which is exactly the false confidence to avoid here.
+        self.schema_seen = schema
+
         def capture(messages):
             self.seen = messages
             return self.result
@@ -90,3 +94,9 @@ async def test_judge_uses_its_own_role_alias(monkeypatch):
 def test_verdict_rejects_an_unknown_label():
     with pytest.raises(ValueError):
         Verdict(label="great", reason="x")
+
+
+async def test_faithfulness_requests_the_verdict_schema(monkeypatch):
+    model = _recording(monkeypatch)
+    await Judge(_cfg()).faithfulness("release v2 regression", 0.9, CITED)
+    assert model.schema_seen is Verdict

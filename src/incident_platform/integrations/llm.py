@@ -205,7 +205,6 @@ class Judge:
     """
 
     def __init__(self, cfg):
-        self.cfg = cfg
         self.model = _model(cfg, cfg.judge_model)
 
     async def faithfulness(self, hypothesis: str, confidence: float, cited: list[dict]) -> Verdict:
