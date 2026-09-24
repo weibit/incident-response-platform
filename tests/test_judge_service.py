@@ -1,5 +1,7 @@
-from incident_platform.judge.main import judge_incident
-from incident_platform.models import Verdict
+from uuid import uuid4
+
+from incident_platform.judge.main import judge_incident, score_event
+from incident_platform.models import Envelope, Verdict
 
 RESOLVED = {
     "incident_id": "inc-1",
@@ -90,3 +92,48 @@ async def test_a_missing_state_is_audited_not_crashed(store, monkeypatch):
     monkeypatch.setattr("incident_platform.judge.main.record_score", Recorder())
     await judge_incident(store, FakeJudge(_supported()), "unknown-incident")
     assert store.audits[-1][0] == "judge.state_missing"
+
+
+async def test_a_malformed_event_is_skipped_not_raised(store):
+    # Unguarded, this would be a guaranteed infinite redelivery: the offset is never
+    # committed, so the broker hands back the same bad message forever.
+    await score_event(store, FakeJudge(_supported()), b"{not json")
+    assert store.audits == []
+
+
+async def test_an_unparseable_envelope_is_skipped(store):
+    await score_event(store, FakeJudge(_supported()), b'{"incident_id": "not-a-uuid"}')
+    assert store.audits == []
+
+
+async def test_a_failure_inside_scoring_is_skipped(store, monkeypatch):
+    def boom(**_):
+        raise RuntimeError("langfuse unreachable")
+
+    monkeypatch.setattr("incident_platform.judge.main.record_score", boom)
+    await store.save_state(RESOLVED)
+    event = Envelope(
+        incident_id=uuid4(),
+        correlation_id=uuid4(),
+        event_type="incident.resolved",
+        source="worker",
+        payload={},
+    )
+    # Must not raise: an unreachable collector cannot be allowed to wedge the consumer.
+    await score_event(store, FakeJudge(_supported()), event.model_dump_json().encode())
+
+
+async def test_a_well_formed_event_is_scored(store, monkeypatch):
+    recorder = Recorder()
+    monkeypatch.setattr("incident_platform.judge.main.record_score", recorder)
+    incident_id = uuid4()
+    await store.save_state({**RESOLVED, "incident_id": str(incident_id)})
+    event = Envelope(
+        incident_id=incident_id,
+        correlation_id=uuid4(),
+        event_type="incident.resolved",
+        source="worker",
+        payload={},
+    )
+    await score_event(store, FakeJudge(_supported()), event.model_dump_json().encode())
+    assert {s["name"] for s in recorder.scores} >= {"outcome_status", "rca_faithfulness"}

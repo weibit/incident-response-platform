@@ -81,6 +81,21 @@ async def judge_incident(store, judge, incident_id: str):
     )
 
 
+async def score_event(store, judge, raw: bytes):
+    """Score one delivered terminal event, never raising.
+
+    The judge is observational, so a message it cannot process must not block every later
+    incident's scores: losing one incident's scores beats losing all of them. Scores are
+    idempotent by derived id, so recovery is an operator resetting this consumer group's
+    offsets rather than the broker redelivering forever.
+    """
+    try:
+        event = Envelope.model_validate_json(raw)
+        await judge_incident(store, judge, str(event.incident_id))
+    except Exception as exc:
+        log.warning("judge.skipped", error_type=type(exc).__name__)
+
+
 async def consume(store, judge, cfg):
     while True:
         consumer = AIOKafkaConsumer(
@@ -94,9 +109,9 @@ async def consume(store, judge, cfg):
         try:
             await consumer.start()
             async for message in consumer:
-                event = Envelope.model_validate_json(message.value)
-                await judge_incident(store, judge, str(event.incident_id))
-                # Commit last: a redelivery overwrites the same scores by their derived ids.
+                await score_event(store, judge, message.value)
+                # Commit whether or not scoring succeeded: one unprocessable event must not
+                # wedge the consumer. A redelivery overwrites the same scores by derived id.
                 await consumer.commit()
         except Exception as exc:
             log.warning("judge.retry", error_type=type(exc).__name__)
