@@ -1,3 +1,5 @@
+from unittest.mock import patch
+
 from incident_platform.judge.scoring import (
     cited_evidence,
     deterministic_scores,
@@ -69,3 +71,29 @@ def test_score_ids_do_not_collide_across_argument_boundaries():
     # A flat "{incident}:{name}" seed collides here, and the failure would be silent:
     # two distinct scores would merge into one upsert.
     assert score_id_for("a:b", "c") != score_id_for("a", "b:c")
+
+
+def test_record_score_forwards_identity_and_type():
+    # score_id is what makes a redelivered event overwrite rather than duplicate, and a
+    # dropped data_type silently changes how Langfuse stores the value.
+    from incident_platform.integrations import evaluation
+
+    captured = {}
+
+    class FakeClient:
+        def create_score(self, **kwargs):
+            captured.update(kwargs)
+
+    with patch.object(evaluation, "get_client", lambda: FakeClient()):
+        evaluation.record_score(
+            trace_id="t1",
+            name="outcome_status",
+            value="resolved",
+            comment="",
+            score_id="s1",
+            data_type="CATEGORICAL",
+        )
+    assert captured["trace_id"] == "t1"
+    assert captured["score_id"] == "s1"
+    assert captured["data_type"] == "CATEGORICAL"
+    assert captured["value"] == "resolved"
