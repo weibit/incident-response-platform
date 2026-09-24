@@ -102,6 +102,24 @@ volume; retention and pruning there are an operator responsibility, as for the i
 Traces contain evidence verbatim, so the collector belongs inside the same trust boundary as the
 worker.
 
+The `judge` service scores completed incidents from `incident.resolved` and
+`incident.manual_review` under consumer group `incident-judge-v1`. It is off unless
+`JUDGE_ENABLED=true` and costs one model call per completed incident. That cost is independent
+of `MOCK_MODE`: enabling the judge always requires a real gateway key, so a judge running in
+mock mode makes a real, billed call and judges the analyst's simulated RCA text.
+
+Its scores attach to each incident's first trace, so an incident processed while tracing was
+disabled cannot be scored and the server discards such writes silently — the `judge.verdict`
+audit row is the durable record. A duplicated terminal event overwrites the same scores by their
+derived ids, at the cost of a second model call.
+
+The judge drains what it cannot process. A malformed event or an unreachable collector is logged
+and the offset committed rather than retried forever, because one unprocessable event must not
+block every later incident's scores. Watch for `judge.skipped` at error level, which means a
+failure on a known incident rather than expected noise, and `judge.export_failed`, which means
+scores were lost but the audit row survived. Re-score by resetting the `incident-judge-v1`
+consumer group: score ids are derived, so a replay overwrites rather than duplicates.
+
 Retention/pruning and database backups are operator responsibilities; migrations currently create tables
 additively, not a full versioned migration framework.
 

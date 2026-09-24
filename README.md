@@ -247,8 +247,17 @@ into the same trace and the graph tree and model usage appear together.
 Traces carry evidence, ticket text and runbook snippets **verbatim**; only credentials are
 masked. That is defensible only because the collector sits inside the deployment boundary, so
 never point `LANGFUSE_BASE_URL` at an external host.
-`integrations/evaluation.py` supplies explicit prompt, score and dataset hooks; `evals/cases.jsonl`
-is ready to seed evaluation datasets. Upload/evaluation is opt-in, not automatically invoked.
+The optional `judge` service scores every completed incident. Four scores restate facts the
+workflow already produced — whether the mitigation verified, the terminal status, the
+investigation round count, and the deterministic citation check — and a fifth,
+`rca_faithfulness`, is a model judgement of whether the stated root cause follows from the
+evidence cited for it, which deterministic policy cannot check. Scores attach to the incident's
+first trace, so the judge requires tracing; it consumes the terminal domain events and never
+touches the incident path. Set `JUDGE_ENABLED=true` with the `observability` profile up.
+
+A verdict is observational. It reaches Langfuse and the audit log, and nothing in the workflow
+reads it. `integrations/evaluation.py` also carries unused prompt and dataset hooks, and
+`evals/cases.jsonl` still awaits the offline dataset work.
 
 ## Bounded LLM context
 

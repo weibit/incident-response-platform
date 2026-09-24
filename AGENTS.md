@@ -15,6 +15,10 @@ Preserve these invariants:
   store; it must never reach an external one, so LANGFUSE_BASE_URL stays inside the deployment.
 - Trace delivery must never affect incident correctness. Tracing failures degrade to no
   callbacks; they never fail an incident and never block worker startup.
+- A judge verdict is never authoritative policy. Scores and audit rows are observational;
+  nothing in the workflow reads them and no verdict changes an incident's handling.
+- The judge treats cited evidence as untrusted data, exactly as the analyst does. Evidence
+  reaching the judge is attacker-controllable, and nothing downstream re-checks its output.
 - Graph nodes replay after failures and interrupts. Make side effects idempotent before enabling them.
 - Mock evidence and execution must stay clearly labeled. Live adapters fail closed until implemented.
 - Keep SQL migrations additive; never drop existing user data as part of setup or tests.
