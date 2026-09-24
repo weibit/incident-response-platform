@@ -113,6 +113,20 @@ disabled cannot be scored and the server discards such writes silently — the `
 audit row is the durable record. A duplicated terminal event overwrites the same scores by their
 derived ids, at the cost of a second model call.
 
+Pick `LLM_MODEL_JUDGE` with a context window large enough for an incident's cited evidence.
+Unlike the analyst, the judge does not route through `build_context`, so its prompt is not bounded
+or summarised: it carries the cited observations verbatim. Cited evidence is a subset of what the
+analyst already fit in order to produce the RCA, so an alias with at least the analyst's window is
+safe, but a smaller or cheaper judge alias will lose `rca_faithfulness` for larger incidents, and
+the failure is logged as `judge.unavailable` — indistinguishable from a transient gateway problem.
+Nothing in the code warns about this.
+
+Throughput is one incident at a time. The judge processes and commits a single message per poll,
+so with real provider latency a single container will lag behind a busy incident stream. Scores
+are idempotent and the audit row is durable, so lag delays verdicts rather than corrupting them;
+scale by adding `judge` replicas, which Kafka spreads across the six partitions of the two
+terminal topics.
+
 The judge drains what it cannot process. A malformed event or an unreachable collector is logged
 and the offset committed rather than retried forever, because one unprocessable event must not
 block every later incident's scores. Watch for `judge.skipped` at error level, which means a

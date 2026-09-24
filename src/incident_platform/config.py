@@ -37,7 +37,9 @@ class Settings(BaseSettings):
     llm_model_summary: str = "incident-summary"
     llm_model_judge: str | None = None
     judge_enabled: bool = False
-    # Use the smallest window across gateway routes/fallbacks for all four model roles.
+    # Use the smallest window across gateway routes/fallbacks for all five model roles.
+    # The judge is one of them but does not route through build_context, so its alias must
+    # have room for an incident's cited evidence unbounded.
     context_window_tokens: int = Field(default=32768, ge=4096)
     context_output_tokens: int = Field(default=2048, ge=128)
     context_safety_tokens: int = Field(default=2048, ge=256)
