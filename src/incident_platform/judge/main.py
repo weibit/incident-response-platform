@@ -58,14 +58,21 @@ async def judge_incident(store, judge, incident_id: str):
     event_id = state.get("input_event_id")
     if event_id:
         trace_id = trace_id_for(incident_id, event_id)
-        for score in scores:
-            record_score(
-                trace_id=trace_id,
-                name=score.name,
-                value=score.value,
-                comment=score.comment,
-                score_id=score_id_for(incident_id, score.name),
-                data_type=score.data_type,
+        try:
+            for score in scores:
+                record_score(
+                    trace_id=trace_id,
+                    name=score.name,
+                    value=score.value,
+                    comment=score.comment,
+                    score_id=score_id_for(incident_id, score.name),
+                    data_type=score.data_type,
+                )
+        except Exception as exc:
+            # The audit row below is the durable, collector-independent floor. Losing the
+            # scores to an outage is expected; losing the record that judging happened is not.
+            log.warning(
+                "judge.export_failed", incident_id=incident_id, error_type=type(exc).__name__
             )
     else:
         log.warning("judge.untraceable", incident_id=incident_id)
@@ -88,12 +95,22 @@ async def score_event(store, judge, raw: bytes):
     incident's scores: losing one incident's scores beats losing all of them. Scores are
     idempotent by derived id, so recovery is an operator resetting this consumer group's
     offsets rather than the broker redelivering forever.
+
+    A message that will not parse is expected noise and warns. A failure once the incident is
+    known is not expected, so it is logged at error with the incident id: those two need to be
+    tellable apart by whoever decides whether to reset offsets.
     """
     try:
         event = Envelope.model_validate_json(raw)
+    except Exception as exc:
+        log.warning("judge.unparseable", error_type=type(exc).__name__)
+        return
+    try:
         await judge_incident(store, judge, str(event.incident_id))
     except Exception as exc:
-        log.warning("judge.skipped", error_type=type(exc).__name__)
+        log.exception(
+            "judge.skipped", incident_id=str(event.incident_id), error_type=type(exc).__name__
+        )
 
 
 async def consume(store, judge, cfg):

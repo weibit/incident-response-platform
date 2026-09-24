@@ -123,6 +123,26 @@ async def test_a_failure_inside_scoring_is_skipped(store, monkeypatch):
     await score_event(store, FakeJudge(_supported()), event.model_dump_json().encode())
 
 
+async def test_a_collector_failure_still_writes_the_audit_row(store, monkeypatch):
+    # The audit row is the durable floor. Losing scores to an outage is expected; losing the
+    # record that judging happened is not.
+    def boom(**_):
+        raise RuntimeError("langfuse unreachable")
+
+    monkeypatch.setattr("incident_platform.judge.main.record_score", boom)
+    await store.save_state(RESOLVED)
+    await judge_incident(store, FakeJudge(_supported()), "inc-1")
+    assert store.audits[-1][0] == "judge.verdict"
+    assert store.audits[-1][1]["faithfulness"] == "supported"
+
+
+async def test_an_unparseable_message_is_logged_without_an_incident(store):
+    # Distinct from a scoring failure: there is no incident id to report, and it is expected
+    # noise rather than a bug worth an error-level line.
+    await score_event(store, FakeJudge(_supported()), b"{not json")
+    assert store.audits == []
+
+
 async def test_a_well_formed_event_is_scored(store, monkeypatch):
     recorder = Recorder()
     monkeypatch.setattr("incident_platform.judge.main.record_score", recorder)
