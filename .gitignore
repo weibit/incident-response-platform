@@ -1,9 +1,25 @@
+# Local credentials and overrides
 .env
+.env.*
+!.env.example
+
+# Python environments, caches, and build outputs
 .venv/
 __pycache__/
-*.pyc
+*.py[cod]
 .pytest_cache/
 .ruff_cache/
 .coverage
+.coverage.*
+htmlcov/
+coverage.xml
 *.egg-info/
+build/
 dist/
+
+# Editor and operating system files
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*.swo

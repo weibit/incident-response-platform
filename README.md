@@ -1,6 +1,6 @@
 # Event-driven AI Incident Response
 
-A Codex-ready Python monorepo with a FastAPI event gateway, Kafka transport, a separate
+A Python incident-response platform with a FastAPI event gateway, Kafka transport, a separate
 LangGraph worker, PostgreSQL application/checkpoint state, LangChain tools/model integration,
 and opt-in self-hosted Langfuse tracing. **Local mode runs without LLM credentials and only simulates
 evidence and execution.** Live evidence, Jira/Slack notification, and production execution adapters
@@ -87,9 +87,9 @@ src/incident_platform/
   observability/     structured logs, trace ids, credential masking, Langfuse callbacks
   bootstrap.py       one-time application/checkpoint/topic setup
 scripts/             curl fixtures, signing helper, end-to-end HTTP demo
- tests/              gateway, graph, policy, PostgreSQL recovery tests
- evals/              dataset-ready adversarial/scenario cases
- docs/operations.md  delivery guarantees, failure handling, integration boundaries
+tests/              gateway, graph, policy, PostgreSQL recovery tests
+evals/              dataset-ready adversarial/scenario cases
+docs/operations.md  delivery guarantees, failure handling, integration boundaries
 AGENTS.md            Codex implementation and verification guidance
 ```
 

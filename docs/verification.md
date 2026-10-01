@@ -109,3 +109,13 @@ Operational note carried over from the tracing work: the Langfuse ingestion work
 recover its Redis connections after the host sleeps. It logged socket timeouts and ingested
 nothing until restarted. Check `docker compose logs langfuse-worker` for socket timeouts before
 concluding that a score write failed.
+
+## GitHub publication check (2026-10-01)
+
+- `uv sync --frozen`: passed with the committed lockfile.
+- `uv run ruff check .` and `uv run ruff format --check .`: passed.
+- `uv run pytest -q`: 195 passed, 23 skipped; one upstream Starlette/AnyIO deprecation warning.
+- PostgreSQL integration tests were skipped because no disposable test database was configured.
+  Docker was unavailable, so the Compose stack and end-to-end demo were not rerun for publication.
+- Local environment files, Python caches, build outputs, and editor files are excluded from Git
+  and the Docker build context. `.env.example` remains available as development configuration.
